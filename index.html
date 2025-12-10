@@ -16,7 +16,7 @@
         function safeShowVisual(){ if (typeof window.showVisual === 'function') { return window.showVisual(); } alert('Visualisointi ei ole vielä ladattu.'); }
     </script>
 
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="./style.css">
 </head>
 <body>
     <div class="header">
@@ -150,8 +150,16 @@
             <h3 id="machineTitle">Uusi IV-Kone</h3>
             <label>Nimi</label>
             <input type="text" id="machineName" placeholder="esim. Vallox 145">
-            <label>Nopeus (1-4)</label>
-            <input type="number" id="machineSpeed" min="1" max="4">
+
+            <label>Yksikkö / Ohjaustapa</label>
+            <select id="machineUnit" style="width: 100%; padding: 8px; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 4px;" onchange="updateMachineInputLimits()">
+                <option value="pa">Vakiopaine (Pa)</option>
+                <option value="hz">Taajuus (Hz)</option>
+                <option value="speed">Nopeus / % (Vakionopeus)</option>
+            </select>
+
+            <label id="machineValueLabel">Asetusarvo (0-10000 Pa)</label>
+            <input type="number" id="machineValue" placeholder="esim. 150">
             <label>Tulo %</label>
             <input type="number" id="machineSupPct" placeholder="50">
             <label>Poisto %</label>
@@ -160,10 +168,10 @@
             <input type="number" id="machineSupplyQ" placeholder="100">
             <label>Poisto l/s (kokonais)</label>
             <input type="number" id="machineExtractQ" placeholder="100">
+            
             <button class="btn btn-primary" onclick="saveMachine()">Tallenna</button>
         </div>
     </div>
-
     <!-- MEASUREMENT/VALVE EDIT VIEW -->
     <div class="view" id="view-measure">
         <div style="padding: 15px;">
@@ -196,6 +204,7 @@
             
             <label>Mitattu paine Pa</label>
             <input type="number" id="measuredP" placeholder="25">
+            <input type="number" id="measuredFlow" placeholder="Virtaus l/s" class="input input-number">
             
             <label>Lämpötila (°C)</label>
             <input type="number" id="airTemp" value="20" placeholder="20">
@@ -444,9 +453,27 @@
             </div>
         </div>
     </div>
+    <div id="ductMeasureModal" class="modal-overlay" style="display:none;">
+        <div class="modal">
+            <div class="modal-header">Mittaa runkokanava (Pitot)</div>
+            <div class="modal-content">
+                <input type="hidden" id="measureDuctId">
+                <p style="font-size:12px; color:#666; margin-bottom:10px;">
+                    Syötä tähän rungosta mitattu todellinen virtaus. Ohjelma vertaa tätä venttiilien summaan.
+                </p>
+                <label>Mitattu virtaus (l/s)</label>
+                <input type="number" id="ductMeasuredFlow" class="input input-number" placeholder="0.0" step="0.1">
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-primary" onclick="saveDuctMeasurement()">Tallenna</button>
+                <button class="btn btn-secondary" onclick="closeDuctMeasureModal()">Peruuta</button>
+                <button class="btn btn-danger" onclick="clearDuctMeasurement()" style="margin-left:auto;">Nollaa</button>
+            </div>
+        </div>
+    </div>
 
     <!-- Poistettu duplikaatti Asunto-modal (aptModal) -->
-    <script src="script.js"></script>
+    <script src="./script.js"></script>
 </body>
 </html>
 <!-- Build: 2025-12-06  | Commit marker: KTS/KSO demo update -->
