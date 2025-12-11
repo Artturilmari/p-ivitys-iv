@@ -44,7 +44,24 @@ if (!p.modes) { p.modes = { home: { machines: JSON.parse(JSON.stringify(p.machin
 function genId(){
     return Math.floor(Date.now() + Math.random()*100000);
 }
-
+// --- APUFUNKTIO: Venttiilin nimen siistiminen (esim. h_kso125 -> KSO-125) ---
+function formatValveDisplay(type) {
+    if (!type) return "-";
+    if (type === 'PITOT') return "Pitot";
+    
+    // Poistetaan valmistajan etuliite (h_, c_, l_, f_ jne.)
+    let clean = type.replace(/^[a-z]+_/, ''); 
+    
+    // Muutetaan isoiksi kirjaimiksi
+    clean = clean.toUpperCase();
+    
+    // Lisätään viiva kirjainten ja numeroiden väliin (esim. KSO125 -> KSO-125)
+    if (!clean.match(/[- ]/) && clean.match(/[A-Z]/) && clean.match(/[0-9]/)) {
+        clean = clean.replace(/([A-Z]+)([0-9]+)/, '$1-$2');
+    }
+    
+    return clean;
+}
 function returnToKerrostalo(){
     activeApartmentId = null;
     renderVisualContent();
@@ -810,62 +827,255 @@ function calcFanLaw() { const hz = parseFloat(document.getElementById('fanHz').v
 
 
 // --- TILOJEN HALLINTA & KOPIOINTI ---
+// --- TILOJEN HALLINTA JA SYNKRONOINTI (ÄLYKÄS) ---
 
 function setMode(mode) {
+    const p = projects.find(x => x.id === activeProjectId);
+    if (!p) return;
 
-const p = projects.find(x => x.id === activeProjectId);
+    // Varmistetaan modes-rakenne
+    if (!p.modes) p.modes = { home: {}, away: {}, boost: {} };
 
-p.modes[currentMode].machines = JSON.parse(JSON.stringify(p.machines));
+    // Master-lista on aina 'home'. Jos vaihdetaan muualle, varmistetaan synkronointi.
+    const homeValves = p.modes['home'].valves || [];
+    let targetValves = p.modes[mode].valves || [];
+    
+    if (mode !== 'home') {
+        // Jos kohdetila on tyhjä tai eri pituinen kuin home, luodaan se uudestaan pohjalta
+        if (targetValves.length === 0 || targetValves.length !== homeValves.length) {
+            targetValves = homeValves.map(v => ({
+                ...v,        // Kopioi kaikki tiedot (nimi, tyyppi, id...)
+                flow: 0,     // Nollaa virtaus
+                measuredP: 0,// Nollaa paine
+                pos: v.pos   // SÄILYTÄ ASENTO (fyysinen vakio)
+            }));
+        } else {
+            // Jos lista on jo olemassa, PÄIVITETÄÄN VAIN ASENNOT ja NIMET Home-tilasta
+            targetValves.forEach((v, i) => {
+                if (homeValves[i]) {
+                    v.pos = homeValves[i].pos;   // Asento synkronoituu
+                    v.room = homeValves[i].room; // Nimi synkronoituu
+                    v.type = homeValves[i].type; // Tyyppi synkronoituu
+                    v.parentDuctId = homeValves[i].parentDuctId;
+                    // HUOM: flow ja measuredP EIVÄT muutu!
+                }
+            });
+        }
+    }
+    
+    // Tallennetaan päivitetty lista takaisin mode-objektiin
+    p.modes[mode].valves = targetValves;
+    
+    // Koneen tiedot (jokaisella tilalla oma asetus)
+    if (!p.modes[mode].machines || p.modes[mode].machines.length === 0) {
+        // Kopioi koneet homesta pohjaksi ensimmäisellä kerralla
+        p.modes[mode].machines = JSON.parse(JSON.stringify(p.modes['home'].machines || []));
+    }
 
-p.modes[currentMode].valves = JSON.parse(JSON.stringify(p.valves));
+    // VAIHDETAAN AKTIIVINEN NÄKYMÄ
+    window.currentMode = mode;
+    p.valves = p.modes[mode].valves;       // p.valves osoittaa nyt valittuun tilaan
+    p.machines = p.modes[mode].machines;   // p.machines osoittaa nyt valittuun tilaan
 
-currentMode = mode;
-
-if (!p.modes[mode] || !p.modes[mode].valves.length === 0) {
-
-const baseValves = JSON.parse(JSON.stringify(p.modes['home'].valves || []));
-
-baseValves.forEach(v => { v.flow = 0; v.measuredP = 0; });
-
-const baseMachines = JSON.parse(JSON.stringify(p.modes['home'].machines || []));
-
-baseMachines.forEach(m => { m.speed = ""; m.supPct = ""; m.extPct = ""; m.supQ = ""; m.extQ = ""; });
-
-p.modes[mode] = { machines: baseMachines, valves: baseValves };
-
+    saveData();
+    renderDetailsList();
 }
 
-p.machines = p.modes[mode].machines;
+function calculateAndSave(next = false) {
+    const p = projects.find(x => x.id === activeProjectId);
+    if (!p) return;
 
-p.valves = p.modes[mode].valves;
+    // --- 1. HAETAAN LOMAKKEEN ARVOT ---
+    const apt = document.getElementById('apartmentName').value || '';
+    const room = document.getElementById('roomName').value || 'Huone';
+    const type = document.getElementById('valveType').value || '';
+    const target = parseFloat(document.getElementById('targetQ').value) || 0;
+    
+    // Paine ja asento
+    const paVal = document.getElementById('measuredP').value;
+    const pa = (paVal === "" || paVal === null) ? null : parseFloat(paVal);
+    const pos = parseFloat(document.getElementById('currentPos').value) || 0;
 
-document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+    // Runko-valinta
+    const selectEl = document.getElementById('parentDuctId');
+    const selectedVal = selectEl ? selectEl.value : "";
+    let finalParentId = null;
 
-const btnId = mode === 'home' ? 'btnModeHome' : (mode === 'away' ? 'btnModeAway' : 'btnModeBoost');
+    // --- 2. UUSI LOGIIKKA: VALINNAN KÄSITTELY (Create New Duct) ---
+    
+    // Tapaus 1: Käyttäjä haluaa luoda uuden rungon valikosta
+    if (selectedVal === "CREATE_NEW_SUPPLY" || selectedVal === "CREATE_NEW_EXTRACT") {
+        const isSupply = (selectedVal === "CREATE_NEW_SUPPLY");
+        const ductType = isSupply ? 'supply' : 'extract';
+        
+        // Lasketaan numero nimeä varten (varmistetaan ettei tule duplikaatteja)
+        const existingDucts = p.ducts.filter(d => d.type === ductType && d.group === 'ahu');
+        let maxNum = 0;
+        existingDucts.forEach(d => {
+            const parts = d.name.split(' ');
+            const num = parseInt(parts[parts.length - 1]);
+            if (!isNaN(num) && num > maxNum) maxNum = num;
+        });
+        const newName = `${isSupply ? 'Tulo' : 'Poisto'} ${maxNum + 1}`;
+        
+        // Luodaan uusi runko
+        const newDuct = {
+            id: Math.floor(Date.now() + Math.random()*1000),
+            name: newName,
+            type: ductType,
+            size: 125,
+            group: 'ahu'
+        };
+        p.ducts.push(newDuct);
+        
+        finalParentId = newDuct.id;
+        
+    } 
+    // Tapaus 2: Käyttäjä valitsi olemassa olevan rungon
+    else if (selectedVal && selectedVal !== "") {
+        finalParentId = Number(selectedVal); // Varmistetaan numero
+    }
+    
+    // Tapaus 3: Valinta tyhjä -> Automaattipäättely (Fallback)
+    if (!finalParentId) {
+        let isSupply = false;
+        // Haetaan mallinimi (esim. "Halton KTS")
+        let nameToCheck = (window.valveIdToModelId && window.valveIdToModelId[type]) ? window.valveIdToModelId[type] : type;
+        nameToCheck = nameToCheck.toLowerCase();
+        
+        // Päätellään onko tulo vai poisto
+        if (nameToCheck.includes("tulo") || nameToCheck.includes("kts") || nameToCheck.includes("fresh") || nameToCheck.includes("supply") || nameToCheck.includes("korvaus")) {
+            isSupply = true;
+        }
+        
+        const ductType = isSupply ? 'supply' : 'extract';
+        const ductName = isSupply ? 'Automaatti Tulo' : 'Automaatti Poisto';
+        
+        // Etsitään tai luodaan automaattirunko
+        let autoDuct = p.ducts.find(d => d.group === 'ahu' && d.type === ductType && d.name === ductName);
+        if (!autoDuct) {
+            autoDuct = { id: Date.now(), name: ductName, type: ductType, size: 125, group: 'ahu' };
+            p.ducts.push(autoDuct);
+        }
+        finalParentId = autoDuct.id;
+    }
+    
+    // --- 3. LASKENTA (Flow) ---
+    let flow = 0;
+    if (type === 'PITOT') {
+        const manualFlow = parseFloat(document.getElementById('measuredFlow').value);
+        if (isNaN(manualFlow)) { 
+            alert("Virhe: Syötä virtaus manuaalisesti Pitot-mittaukselle!"); 
+            return; 
+        }
+        flow = manualFlow;
+    } else {
+        // Lasketaan K-arvon ja paineen avulla
+        const kFunc = (typeof getK === 'function') ? getK : defaultGetK;
+        if(type && !isNaN(pos) && pa !== null){
+            flow = kFunc(type, pos) * Math.sqrt(Math.max(0, pa));
+        }
+    }
 
-document.getElementById(btnId).classList.add('active');
+    // --- 4. DATAOBJEKTIN LUONTI ---
+    const newVal = { 
+        apartment: apt || undefined, 
+        room, 
+        type, 
+        target, 
+        flow, 
+        pos, 
+        measuredP: pa, 
+        parentDuctId: Number(finalParentId) 
+    };
 
-saveData(); renderDetailsList();
+    // --- 5. TALLENNUS JA SYNKRONOINTI TILOJEN VÄLILLÄ ---
+    if (editingValveIndex !== null && editingValveIndex >= 0) {
+        // 1. Päivitetään nykyinen tila
+        p.valves[editingValveIndex] = newVal;
 
+        // 2. Päivitetään muiden tilojen ASENTO (pos) ja PERUSTIEDOT samalle indeksille
+        ['home', 'away', 'boost'].forEach(m => {
+            if (m !== window.currentMode && p.modes[m] && p.modes[m].valves && p.modes[m].valves[editingValveIndex]) {
+                const otherV = p.modes[m].valves[editingValveIndex];
+                otherV.pos = pos;        // Asento synkronoituu!
+                otherV.room = room;      // Nimi synkronoituu
+                otherV.type = type;      // Tyyppi synkronoituu
+                otherV.parentDuctId = Number(finalParentId); // Runko synkronoituu
+                // Flow ja measuredP EIVÄT muutu muissa tiloissa
+            }
+        });
+
+        editingValveIndex = null;
+    } else {
+        // UUSI VENTTIILI: Lisätään se KAIKKIIN tiloihin
+        p.valves.push(newVal);
+        
+        ['home', 'away', 'boost'].forEach(m => {
+            if (m !== window.currentMode) {
+                // Luodaan kopio nollatuilla mittauksilla muihin tiloihin
+                const copyVal = { ...newVal, flow: 0, measuredP: 0 };
+                if(!p.modes[m].valves) p.modes[m].valves = [];
+                p.modes[m].valves.push(copyVal);
+            }
+        });
+    }
+
+    saveData();
+    
+    // --- 6. UI PALAUTE JA SEURAAVA VAIHE ---
+    const resDiv = document.getElementById('calcResult');
+    if(resDiv) { resDiv.style.display = 'block'; resDiv.innerText = `Tallennettu: ${flow.toFixed(1)} l/s`; }
+
+    if(next){
+        // Tyhjennetään kentät seuraavaa varten
+        document.getElementById('roomName').value = '';
+        document.getElementById('measuredP').value = '';
+        document.getElementById('currentPos').value = '';
+        const flowIn = document.getElementById('measuredFlow');
+        if(flowIn) flowIn.value = '';
+        
+        if(typeof updateLiveK === 'function') updateLiveK();
+        
+        // PÄIVITETÄÄN VALIKKO, jotta uusi runko näkyy siellä heti
+        populateDuctSelect(); 
+        
+        // Asetetaan valinta äsken luotuun runkoon, jotta seuraava venttiili menee samaan
+        document.getElementById('parentDuctId').value = finalParentId;
+    } else {
+        if(returnToVisual) {
+            returnToVisual = false;
+            if(typeof showVisual === 'function') showVisual(); 
+            else { renderVisualContent(); showView('view-visual'); }
+        } else {
+            showView('view-details');
+            if(typeof renderDetailsList === 'function') renderDetailsList();
+        }
+    }
+}
+function deleteValveByIndex(idx){
+    const p = projects.find(x => x.id === activeProjectId);
+    if(!p) return;
+    if(idx<0 || idx>=p.valves.length) return;
+    
+    if(confirm('Poistetaanko venttiili kaikista tiloista?')){
+        // Poistetaan kaikista moodeista samasta indeksistä, jotta synkka säilyy
+        ['home', 'away', 'boost'].forEach(m => {
+            if (p.modes[m] && p.modes[m].valves) {
+                p.modes[m].valves.splice(idx, 1);
+            }
+        });
+        
+        // Päivitetään nykyinen viittaus (varmuuden vuoksi)
+        p.valves = p.modes[window.currentMode].valves;
+        
+        saveData();
+        renderDetailsList();
+        if(window.activeVisMode) renderVisualContent();
+    }
 }
 
-function copyModeData(targetMode) {
 
-if(targetMode === currentMode) return;
-
-if(confirm(`Haluatko varmasti kopioida nykyiset (mitatut) arvot tilaan "${targetMode}"?`)) {
-
-const p = projects.find(x => x.id === activeProjectId);
-
-p.modes[targetMode].valves = JSON.parse(JSON.stringify(p.valves));
-
-p.modes[targetMode].machines = JSON.parse(JSON.stringify(p.machines));
-
-saveData(); alert(`Tiedot kopioitu tilaan: ${targetMode}`);
-
-}
-
-}
 
 
 
@@ -977,207 +1187,376 @@ function openProject(id) {
 window.openProject = openProject;
 window.showView = showView;
 
-// --- KORJAUS 2: ETUSIVU (DASHBOARD) ---
+// --- UUSI PROJEKTIN PÄÄNÄKYMÄ (SISÄLTÄÄ TILOJEN VALINNAN) ---
+// --- APUFUNKTIO: PÄIVITÄ METATIEDOT HETI (D2 ja Otsikkotiedot) ---
+// --- APUFUNKTIO: PÄIVITÄ METATIEDOT ---
+// --- APUFUNKTIO: PÄIVITÄ JA TALLENNA METATIEDOT ---
+// --- APUFUNKTIO: PÄIVITÄ METATIEDOT (SMART SAVE) ---
+function updateProjectMeta(field, value) {
+    const p = projects.find(x => x.id === activeProjectId);
+    if (!p) return;
+    if (!p.meta) p.meta = {};
+
+    // 1. Numerokentät tallennetaan numeroina (D2 ja SFP tehot)
+    if (['area', 'height', 'powerSup', 'powerExt'].includes(field)) {
+        p.meta[field] = parseFloat(value);
+    } else {
+        // 2. Tekstikentät tallennetaan tekstinä (Osoite, Yritys, Laakerit...)
+        p.meta[field] = value;
+    }
+
+    saveData(); // Tallenna kantaan
+
+    // 3. PÄIVITÄ NÄKYMÄ VAIN JOS LASKENTA MUUTTUU
+    // Tämä on tärkeää: Jos päivittäisimme sivun kun kirjoitat nimeä,
+    // tekstikenttä menettäisi fokuksen ("kursori karkaa").
+    // Päivitetään vain, jos muutetaan numeroita jotka vaikuttavat laskureihin.
+    if (['area', 'height', 'powerSup', 'powerExt'].includes(field)) {
+        renderDetailsList();
+    }
+}
+// --- PÄIVITETTY INLINE-MUOKKAUS (HUONE MUKANA) ---
+window.updateValveInline = function(idx, field, value) {
+    const p = projects.find(x => x.id === activeProjectId);
+    if (!p) return;
+    
+    const currentMode = window.currentMode || 'home';
+    const valves = p.modes[currentMode].valves;
+    const v = valves[idx];
+    if (!v) return;
+
+    let numVal = parseFloat(value);
+    
+    if (field === 'room') {
+        // HUONEEN NIMI MUUTTUU: Synkronoidaan kaikkiin tiloihin
+        v.room = value;
+        ['home', 'away', 'boost'].forEach(m => {
+            if (p.modes[m] && p.modes[m].valves && p.modes[m].valves[idx]) {
+                p.modes[m].valves[idx].room = value;
+            }
+        });
+    }
+    else if (field === 'pos') {
+        if (isNaN(numVal)) numVal = 0;
+        v.pos = numVal;
+        ['home', 'away', 'boost'].forEach(m => {
+            if (p.modes[m] && p.modes[m].valves && p.modes[m].valves[idx]) {
+                p.modes[m].valves[idx].pos = numVal;
+            }
+        });
+        if (v.measuredP !== null && v.measuredP !== undefined && v.type !== 'PITOT') {
+            const kFunc = (typeof getK === 'function') ? getK : defaultGetK;
+            const k = kFunc(v.type, v.pos);
+            v.flow = k * Math.sqrt(Math.max(0, v.measuredP));
+        }
+    } 
+    else if (field === 'type') {
+        v.type = value;
+        ['home', 'away', 'boost'].forEach(m => {
+            if (p.modes[m] && p.modes[m].valves && p.modes[m].valves[idx]) {
+                p.modes[m].valves[idx].type = value;
+            }
+        });
+        if (v.measuredP !== null && v.measuredP !== undefined && v.type !== 'PITOT') {
+            const kFunc = (typeof getK === 'function') ? getK : defaultGetK;
+            const currentPos = v.pos || 0;
+            const k = kFunc(v.type, currentPos);
+            v.flow = k * Math.sqrt(Math.max(0, v.measuredP));
+        }
+    }
+    else if (field === 'measuredP') {
+        if (value === "") { v.measuredP = null; v.flow = 0; } 
+        else {
+            v.measuredP = numVal;
+            if (v.type !== 'PITOT') {
+                const kFunc = (typeof getK === 'function') ? getK : defaultGetK;
+                const k = kFunc(v.type, v.pos || 0);
+                v.flow = k * Math.sqrt(Math.max(0, v.measuredP));
+            }
+        }
+    }
+    else if (field === 'flow') { if (isNaN(numVal)) numVal = 0; v.flow = numVal; }
+    else if (field === 'target') { if (isNaN(numVal)) numVal = 0; v.target = numVal; }
+
+    saveData();
+    renderDetailsList(); 
+};
+
 function renderDetailsList() {
     const p = projects.find(x => x.id === activeProjectId);
     if (!p) return;
 
-    // --- LASKENTA ---
+    if (!p.modes) {
+        p.modes = { 
+            home: { machines: JSON.parse(JSON.stringify(p.machines||[])), valves: JSON.parse(JSON.stringify(p.valves||[])) }, 
+            away: { machines: [], valves: [] }, 
+            boost: { machines: [], valves: [] } 
+        };
+    }
+    if (!window.currentMode) window.currentMode = 'home';
+    const currentMode = window.currentMode; 
+
+    p.valves = p.modes[currentMode].valves;
+    p.machines = p.modes[currentMode].machines;
+
+    // 1. OPTIOT
+    const db = (typeof valveDB !== 'undefined') ? valveDB : (window.valveDB || {});
+    let valveOptionsHTML = '<option value="">- Valitse -</option><option value="PITOT">Suora mittaus (Pitot)</option>';
+    if (Object.keys(db).length > 0) {
+        Object.keys(db).sort((a,b) => db[a].name.localeCompare(db[b].name)).forEach(k => {
+            // Tässä käytetään uutta nimeämistä listassa (KSO-125)
+            valveOptionsHTML += `<option value="${k}">${formatValveDisplay(k)}</option>`; 
+        });
+    }
+
+    // 2. LASKENTA
     let sumSup = 0, sumExt = 0;
     let targetSup = 0, targetExt = 0;
-    let countMeasured = 0;
-    
-    const supplyValves = [];
-    const extractValves = [];
+    const kFunc = (typeof getK === 'function') ? getK : defaultGetK;
+    const supplyValves = [], extractValves = [];
 
-    // Jaotellaan venttiilit ja lasketaan summat
-    (p.valves||[]).forEach(v => {
+    (p.valves||[]).forEach((v, trueIdx) => {
+        v._origIdx = trueIdx;
         const d = (p.ducts||[]).find(d=>d.id == v.parentDuctId);
         const flow = parseFloat(v.flow||0);
-        const target = parseFloat(v.target||v.targetFlow||0);
-        
+        const target = parseFloat(v.target||0);
         let isSup = false;
         if (d && d.type === 'supply') isSup = true;
         else if (!d && (v.type||'').toLowerCase().includes('tulo')) isSup = true;
 
-        if (isSup) {
-            sumSup += flow; targetSup += target;
-            supplyValves.push(v);
-        } else {
-            sumExt += flow; targetExt += target;
-            extractValves.push(v);
-        }
-        if (flow > 0) countMeasured++;
+        v._calcK = (v.type && v.pos !== null && v.pos !== undefined) ? kFunc(v.type, v.pos) : 0;
+
+        if (isSup) { sumSup += flow; targetSup += target; supplyValves.push(v); }
+        else { sumExt += flow; targetExt += target; extractValves.push(v); }
     });
 
-    // Lajitellaan listat
     const sorter = (a,b) => (a.apartment||'').localeCompare(b.apartment||'') || (a.room||'').localeCompare(b.room||'');
-    supplyValves.sort(sorter);
-    extractValves.sort(sorter);
+    supplyValves.sort(sorter); extractValves.sort(sorter);
 
-    // Painesuhde
-    let balanceText = "- %";
-    let balanceColor = "#7f8c8d"; // Harmaa
+    // KPI & INFO
+    let balanceText = "- %", balanceColor = "#7f8c8d";
     if (sumExt > 0) {
         const ratio = sumSup / sumExt; 
         const diffPct = Math.round((1 - ratio) * 100); 
-        if (ratio > 1.0) { 
-            balanceText = `Ylipaine ${Math.abs(diffPct)}%`; 
-            balanceColor = "#c0392b"; // Punainen
-        } else if (ratio < 0.90) { 
-            balanceText = `Alipaine ${diffPct}% (Vahva)`; 
-            balanceColor = "#d35400"; // Oranssi
-        } else { 
-            balanceText = `Alipaine ${diffPct}% (OK)`; 
-            balanceColor = "#27ae60"; // Vihreä
+        if (ratio > 1.0) { balanceText = `Ylipaine ${Math.abs(diffPct)}%`; balanceColor = "#c0392b"; }
+        else if (ratio < 0.90) { balanceText = `Alipaine ${diffPct}% (Vahva)`; balanceColor = "#d35400"; }
+        else { balanceText = `Alipaine ${diffPct}% (OK)`; balanceColor = "#27ae60"; }
+    }
+
+    const ahu = (p.machines||[]).find(m=>m.type==='ahu') || {name: 'IV-Kone'};
+    const u = ahu.unit || 'pct';
+    const val = (ahu.settingVal !== undefined && ahu.settingVal !== null && ahu.settingVal !== "") ? ahu.settingVal : '-';
+    let machineInfo = u==='pa' ? `${val} Pa` : (u==='hz' ? `${val} Hz` : `${val} %`);
+
+    const area = p.meta.area || 0;
+    const height = p.meta.height || 2.5;
+    let reqFlow = 0, d2Status = `<span style="color:#999;">(Syötä m²)</span>`;
+    if (area > 0) {
+        reqFlow = (area * height * 0.5) / 3.6;
+        const diff = sumExt - reqFlow;
+        d2Status = diff >= 0 ? `<b style="color:#27ae60">OK</b>` : `<b style="color:#c0392b">Vajaa ${Math.abs(diff).toFixed(1)} l/s</b>`;
+    }
+
+    const powerSup = p.meta.powerSup || 0;
+    const powerExt = p.meta.powerExt || 0;
+    let sfpText = "-";
+    if (powerSup + powerExt > 0) {
+        const maxFlow = Math.max(sumSup, sumExt);
+        if (maxFlow > 0) {
+            const sfp = ((powerSup + powerExt) / 1000) / (maxFlow / 1000);
+            sfpText = sfp.toFixed(2);
         }
     }
 
-    // Koneen tiedot
-    const ahu = (p.machines||[]).find(m=>m.type==='ahu') || {name: 'IV-Kone'};
-    const u = ahu.unit || 'speed';
-    const v = ahu.settingVal || ahu.speed || '-';
-    let machineInfo = u==='pa' ? `${v} Pa` : (u==='hz' ? `${v} Hz` : `${v}%`);
+    const dateVal = p.meta.date || new Date().toLocaleDateString('fi-FI');
+    const timeVal = p.meta.time || new Date().toLocaleTimeString('fi-FI', {hour:'2-digit', minute:'2-digit'});
 
-    // --- RENDERÖINTI ---
+    // 3. RENDERÖINTI
     const view = document.getElementById('view-details');
-    // Tyhjennetään näkymä ja luodaan otsikot
-    view.innerHTML = `<div style="padding:10px; max-width:1200px; margin:0 auto;">
-                        <div style="display:flex; align-items:center; justify-content:space-between; border-bottom:2px solid #eee; padding-bottom:10px; margin-bottom:15px;">
-                            <div style="display:flex; align-items:center; gap:10px;">
-                                <h1 style="margin:0; font-size:22px; color:#2c3e50;">${p.name}</h1>
-                                <button class="list-action-btn" onclick="renameActiveProject()" title="Muokkaa nimeä" style="font-size:16px;">✏️</button>
-                            </div>
-                            <button class="btn btn-sm btn-outline" style="font-size:10px; padding:2px 6px;" onclick="showSettings()">ℹ️ Lisätiedot</button>
-                        </div>
-                        <div id="dashContent"></div>
-                      </div>`;
-                      
-    const container = document.getElementById('dashContent');
-
-    // Rivin luonti apufunktio
+    
     const renderRow = (v) => {
-        const realIdx = p.valves.indexOf(v);
+        const idx = v._origIdx; 
         const flow = parseFloat(v.flow||0);
         const target = parseFloat(v.target||0);
-        const diff = Math.abs(flow - target);
+        let flowClass = (target > 0 && flow > 0) ? ((Math.abs(flow - target) / target <= 0.10) ? "val-ok" : "val-err") : "";
         
-        let flowClass = "";
-        if (target > 0 && flow > 0) {
-            flowClass = (diff / target <= 0.10) ? "val-ok" : "val-err";
-        }
+        // HUONEEN MUOKKAUS: Input-kenttä
+        const roomVal = v.room || '';
+        const aptVal = v.apartment ? `[${v.apartment}] ` : '';
         
-        // Venttiilin tyyppi (siistitty nimi)
-        let modelStr = v.type || '-';
-        if (window.valveIdToModelId && window.valveIdToModelId[v.type]) {
-             modelStr = window.valveIdToModelId[v.type].replace('Halton', '').replace('Fläkt', '').replace('Climecon', '').trim();
-        }
+        const pos = v.pos !== null && v.pos !== undefined ? Math.round(v.pos) : '';
+        const pa = v.measuredP !== null && v.measuredP !== undefined ? v.measuredP : '';
+        const kDisplay = (v._calcK > 0) ? v._calcK.toFixed(2) : '-';
+        const currentType = v.type || "";
+        const rowOptions = valveOptionsHTML.split(`value="${currentType}"`).join(`value="${currentType}" selected`);
 
-        const roomStr = v.apartment ? `<b>${v.apartment}</b> ${v.room}` : v.room;
-        const posStr = v.pos !== null && v.pos !== undefined ? Math.round(v.pos) : '-';
-        const paStr = v.measuredP !== null && v.measuredP !== undefined ? v.measuredP : '-';
-
-        return `<tr onclick="editValve(${realIdx})">
-                    <td>${roomStr}</td>
-                    <td style="font-size:10px; color:#666;">${modelStr}</td>
-                    <td>${posStr}</td>
-                    <td>${paStr}</td>
-                    <td class="${flowClass}">${flow.toFixed(1)}</td>
-                    <td style="color:#888;">${target.toFixed(1)}</td>
+        return `<tr onclick="editValve(${idx})">
+                    <td style="padding:2px;">
+                        ${aptVal ? `<span style="font-size:10px;color:#888;">${aptVal}</span>` : ''}
+                        <input type="text" value="${roomVal}" onclick="event.stopPropagation()" onchange="updateValveInline(${idx}, 'room', this.value)" class="inline-inp" style="width:80%; text-align:left; padding-left:4px;">
+                    </td>
+                    <td style="padding:2px;"><select onclick="event.stopPropagation()" onchange="updateValveInline(${idx}, 'type', this.value)" class="inline-select" style="width:100%;">${rowOptions}</select></td>
+                    <td style="font-size:11px; font-weight:bold; color:#0066cc; text-align:center;">${kDisplay}</td>
+                    <td style="padding:2px;"><input type="number" step="1" placeholder="-" value="${pos}" onclick="event.stopPropagation()" onchange="updateValveInline(${idx}, 'pos', this.value)" class="inline-inp" style="width:100%;"></td>
+                    <td style="padding:2px;"><input type="number" step="1" placeholder="-" value="${pa}" onclick="event.stopPropagation()" onchange="updateValveInline(${idx}, 'measuredP', this.value)" class="inline-inp" style="width:100%;"></td>
+                    <td style="padding:2px;"><input type="number" step="0.1" value="${flow.toFixed(1)}" onclick="event.stopPropagation()" onchange="updateValveInline(${idx}, 'flow', this.value)" class="inline-inp ${flowClass}" style="width:100%; font-weight:bold;"></td>
+                    <td style="padding:2px;"><input type="number" step="0.1" value="${target.toFixed(1)}" onclick="event.stopPropagation()" onchange="updateValveInline(${idx}, 'target', this.value)" class="inline-inp" style="width:100%; color:#888;"></td>
                 </tr>`;
     };
 
+    const activeColor = '#4CAF50'; 
+    const getBtnStyle = (m) => `flex:1; padding:10px; border:1px solid #ccc; background: ${currentMode === m ? activeColor : '#f1f1f1'} !important; color: ${currentMode === m ? '#fff' : '#444'} !important; font-weight:bold; cursor:pointer; border-radius:6px; transition:all 0.2s; box-shadow: ${currentMode === m ? 'inset 0 2px 4px rgba(0,0,0,0.2)' : '0 1px 2px rgba(0,0,0,0.1)'};`;
+
     let html = `
         <style>
-            .kpi-row { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 8px; margin-bottom: 15px; }
-            .kpi-box { background:#fff; padding: 8px 4px; border-radius:6px; border:1px solid #ddd; text-align:center; box-shadow:0 1px 3px rgba(0,0,0,0.05); display: flex; flex-direction: column; justify-content: center; min-height: 70px; }
-            .kpi-val-group { display:flex; align-items:baseline; justify-content:center; gap:2px; line-height: 1; margin-bottom: 4px; }
-            .kpi-val { font-size: 18px; font-weight:800; display:block; }
-            .kpi-target { font-size: 11px; color:#999; font-weight:normal; }
-            .kpi-lbl { font-size: 9px; text-transform:uppercase; color:#777; font-weight:600; line-height:1.2; }
-            
-            /* Listat vierekkäin */
-            .lists-container { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 20px; }
+            .kpi-row { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+            .kpi-box { background:#fff; padding: 8px 4px; border-radius:6px; border:1px solid #ddd; text-align:center; box-shadow:0 1px 3px rgba(0,0,0,0.05); }
+            .kpi-val { font-size: 18px; font-weight:800; }
+            .kpi-lbl { font-size: 9px; text-transform:uppercase; color:#777; font-weight:600; }
+            .tool-btn { padding:12px; background:#f8f9fa; border:1px solid #ccc; border-radius:6px; font-weight:bold; color:#444; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px; font-size:13px; }
+            .lists-container { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 15px; }
             .list-col { flex: 1; min-width: 300px; background: #fff; border-radius: 8px; border: 1px solid #ddd; overflow: hidden; }
-            
-            .mini-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-            .mini-table th { background: #f9f9f9; padding: 6px 4px; text-align: left; color: #666; font-size: 10px; border-bottom: 1px solid #eee; }
-            .mini-table td { padding: 6px 4px; border-bottom: 1px solid #eee; }
-            .mini-table tr:hover { background: #f0f4f8; cursor: pointer; }
-            .val-ok { color: #27ae60; font-weight: bold; }
-            .val-err { color: #c0392b; font-weight: bold; }
+            .mini-table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
+            .mini-table th { background: #f9f9f9; padding: 6px 4px; text-align: center; font-size:11px; color:#555; }
+            .mini-table th:nth-child(1) { text-align: left; width: 25%; } 
+            .mini-table th:nth-child(2) { text-align: left; width: 30%; } 
+            .mini-table td { border-bottom: 1px solid #eee; vertical-align: middle; }
+            .inline-inp { border: 1px solid transparent; background: transparent; text-align: center; padding: 8px 0; font-size: 14px; border-radius: 4px; }
+            .inline-inp:focus { border: 1px solid #2196F3; background: #fff; outline: none; }
+            .inline-inp.val-ok { color: #27ae60; } .inline-inp.val-err { color: #c0392b; }
+            .inline-select { border: 1px solid transparent; background: transparent; padding: 8px 2px; font-size: 12px; color: #444; border-radius: 4px; width: 100%; cursor: pointer; }
+            .mode-row { display:flex; gap:8px; margin-bottom:15px; background:#fff; padding:5px; border-radius:8px; border:1px solid #eee; }
+            .tech-box { background:#eef5e9; border:1px solid #c3e6cb; border-radius:6px; padding:15px; margin-bottom:15px; }
+            .tech-row { display:flex; flex-wrap:wrap; gap:15px; align-items:center; margin-bottom:10px; }
+            .tech-row:last-child { margin-bottom:0; }
+            .input-xl { font-size:16px; padding:10px; width:80px; border:1px solid #ccc; border-radius:6px; text-align:center; font-weight:bold; }
+            .label-xl { font-size:14px; font-weight:bold; color:#2c3e50; }
+            .sel-xl { font-size:14px; padding:8px; border:1px solid #ccc; border-radius:6px; width:100%; }
+            .info-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 10px; background:#fff; padding:10px; border-radius:6px; border:1px solid #eee; }
+            .info-col { display: flex; flex-direction: column; gap: 8px; }
+            .info-inp { width:100%; border:1px solid #ddd; padding:8px; border-radius:4px; font-size:14px; color:#333; }
+            .info-inp:focus { border-color:#2196F3; outline:none; }
+            .info-label { font-size: 11px; font-weight: bold; color: #666; margin-bottom: 2px; }
         </style>
 
-        <div class="kpi-row">
-            <div class="kpi-box" style="border-top: 3px solid #3498db;">
-                <div class="kpi-val-group">
-                    <span class="kpi-val" style="color:#3498db;">${sumSup.toFixed(0)}</span>
-                    <span class="kpi-target">/ ${targetSup.toFixed(0)}</span>
+        <div style="padding:10px; max-width:1200px; margin:0 auto;">
+            
+            <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
+                <h1 style="margin:0; font-size:22px; color:#2c3e50;">${p.name}</h1>
+                <button class="list-action-btn" onclick="renameActiveProject()" title="Muokkaa nimeä" style="font-size:16px;">✏️</button>
+            </div>
+
+            <div class="info-grid">
+                <div class="info-col">
+                    <div><div class="info-label">Kohde (Nimi)</div><input class="info-inp" type="text" placeholder="Esim. OKT Virtanen" value="${p.meta.location||''}" onchange="updateProjectMeta('location', this.value)"></div>
+                    <div><div class="info-label">Kohteen Osoite</div><input class="info-inp" type="text" placeholder="Esim. Esimerkkitie 1" value="${p.meta.address||''}" onchange="updateProjectMeta('address', this.value)"></div>
                 </div>
-                <div class="kpi-lbl">Tulo l/s</div>
-            </div>
-            
-            <div class="kpi-box" style="border-top: 3px solid #e74c3c;">
-                <div class="kpi-val-group">
-                    <span class="kpi-val" style="color:#e74c3c;">${sumExt.toFixed(0)}</span>
-                    <span class="kpi-target">/ ${targetExt.toFixed(0)}</span>
+                <div class="info-col">
+                    <div><div class="info-label">Mittaaja (Henkilö)</div><input class="info-inp" type="text" placeholder="Esim. Matti Meikäläinen" value="${p.meta.measurer||''}" onchange="updateProjectMeta('measurer', this.value)"></div>
+                    <div><div class="info-label">Käytetty Mittari</div><input class="info-inp" type="text" placeholder="Esim. TSI / Swema" value="${p.meta.device||''}" onchange="updateProjectMeta('device', this.value)"></div>
                 </div>
-                <div class="kpi-lbl">Poisto l/s</div>
-            </div>
-            
-            <div class="kpi-box" style="border-top: 3px solid ${balanceColor};">
-                <span class="kpi-val" style="color:${balanceColor}; font-size:14px;">${balanceText}</span>
-                <div class="kpi-lbl" style="margin-top:2px;">Painesuhde</div>
-            </div>
-            
-            <div class="kpi-box" onclick="editMachine(0)" style="cursor:pointer; border-top: 3px solid #34495e;">
-                <span class="kpi-val" style="color:#34495e; font-size:16px;">${machineInfo}</span>
-                <div class="kpi-lbl">Kone (Muokkaa)</div>
-            </div>
-        </div>
-
-        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-bottom:15px;">
-            <button class="btn btn-primary" onclick="showVisual()">🗺️ Avaa Kartta</button>
-            <button class="btn btn-secondary" onclick="showAddValve()">➕ Lisää Venttiili</button>
-            <button class="btn btn-secondary" onclick="openCreateAptAHUModal()">🏢 Asunnot</button>
-            <button class="btn btn-secondary" onclick="showReportSupplyExtract()">📄 Pöytäkirjat</button>
-            <button class="btn btn-secondary" onclick="shareProjectData()">📤 Jaa</button>
-        </div>
-
-        <h4 style="margin:0; border-bottom:1px solid #ddd; padding-bottom:5px; font-size:14px;">Mittauspöytäkirja / Lista</h4>
-        
-        <div class="lists-container">
-            <div class="list-col" style="border-top: 3px solid #3498db;">
-                <div style="padding:8px; background:#3498db; color:white; font-weight:bold; font-size:12px;">Tulo (${supplyValves.length})</div>
-                <table class="mini-table">
-                    <thead><tr><th>Huone</th><th>Malli</th><th>Pos</th><th>Pa</th><th>l/s</th><th>Tav</th></tr></thead>
-                    <tbody>
-                        ${supplyValves.length > 0 ? supplyValves.map(renderRow).join('') : '<tr><td colspan="6" style="text-align:center; padding:15px; color:#ccc;">Ei tuloventtiilejä</td></tr>'}
-                    </tbody>
-                </table>
+                <div class="info-col">
+                    <div><div class="info-label">Yritys (Nimi, Y-tunnus)</div><input class="info-inp" type="text" placeholder="Yritys Oy, 123456-7" value="${p.meta.company||''}" onchange="updateProjectMeta('company', this.value)"></div>
+                    <div style="display:flex; gap:5px;">
+                        <div style="flex:1;"><div class="info-label">Pvm</div><input class="info-inp" type="text" value="${dateVal}" onchange="updateProjectMeta('date', this.value)"></div>
+                        <div style="flex:1;"><div class="info-label">Aika</div><input class="info-inp" type="text" value="${timeVal}" onchange="updateProjectMeta('time', this.value)"></div>
+                    </div>
+                </div>
             </div>
 
-            <div class="list-col" style="border-top: 3px solid #e74c3c;">
-                <div style="padding:8px; background:#e74c3c; color:white; font-weight:bold; font-size:12px;">Poisto (${extractValves.length})</div>
-                <table class="mini-table">
-                    <thead><tr><th>Huone</th><th>Malli</th><th>Pos</th><th>Pa</th><th>l/s</th><th>Tav</th></tr></thead>
-                    <tbody>
-                        ${extractValves.length > 0 ? extractValves.map(renderRow).join('') : '<tr><td colspan="6" style="text-align:center; padding:15px; color:#ccc;">Ei poistoventtiilejä</td></tr>'}
-                    </tbody>
-                </table>
+            <div class="mode-row">
+                <button style="${getBtnStyle('home')}" onclick="setMode('home')">🏠 Kotona</button>
+                <button style="${getBtnStyle('away')}" onclick="setMode('away')">🏃 Poissa</button>
+                <button style="${getBtnStyle('boost')}" onclick="setMode('boost')">🚀 Tehostus</button>
+            </div>
+
+            <div class="kpi-row">
+                <div class="kpi-box" style="border-top: 3px solid #3498db;"><div><span class="kpi-val" style="color:#3498db;">${sumSup.toFixed(0)}</span> <span style="font-size:11px;color:#999">/ ${targetSup.toFixed(0)}</span></div><div class="kpi-lbl">Tulo l/s</div></div>
+                <div class="kpi-box" style="border-top: 3px solid #e74c3c;"><div><span class="kpi-val" style="color:#e74c3c;">${sumExt.toFixed(0)}</span> <span style="font-size:11px;color:#999">/ ${targetExt.toFixed(0)}</span></div><div class="kpi-lbl">Poisto l/s</div></div>
+                <div class="kpi-box" style="border-top: 3px solid ${balanceColor};"><span class="kpi-val" style="color:${balanceColor}; font-size:14px;">${balanceText}</span><div class="kpi-lbl" style="margin-top:2px;">Painesuhde</div></div>
+                <div class="kpi-box" onclick="editMachine(0)" style="cursor:pointer; border-top: 3px solid #34495e;"><span class="kpi-val" style="color:#34495e; font-size:16px;">${machineInfo}</span><div class="kpi-lbl">Kone (${currentMode})</div></div>
+            </div>
+
+            <div class="tech-box">
+                <div class="tech-row" style="border-bottom:1px solid #ccc; padding-bottom:15px;">
+                    <span class="label-xl">D2-Määräys:</span>
+                    <div style="display:flex; align-items:center; gap:5px;">
+                        <input type="number" class="input-xl" placeholder="m²" value="${p.meta.area||''}" onchange="updateProjectMeta('area',this.value)"> <span>m²</span>
+                    </div>
+                    <span style="color:#aaa; font-size:20px;">x</span>
+                    <div style="display:flex; align-items:center; gap:5px;">
+                        <input type="number" class="input-xl" placeholder="h" value="${p.meta.height||'2.5'}" onchange="updateProjectMeta('height',this.value)"> <span>h</span>
+                    </div>
+                    <div style="margin-left:auto; text-align:right;">
+                        <div style="font-size:12px; color:#666;">Tavoite</div>
+                        <div style="font-size:18px; font-weight:bold;">${reqFlow.toFixed(0)} l/s</div>
+                        <div style="font-size:12px;">${d2Status}</div>
+                    </div>
+                </div>
+                
+                <div class="tech-row" style="align-items: flex-start; padding-top:10px;">
+                    <div style="flex:1; min-width:200px;">
+                        <div class="label-xl" style="margin-bottom:5px;">SFP-Luku: <span style="color:#2196F3;">${sfpText}</span></div>
+                        <div style="display:flex; gap:10px;">
+                            <input type="number" class="input-xl" placeholder="Tul W" value="${p.meta.powerSup||''}" onchange="updateProjectMeta('powerSup',this.value)">
+                            <input type="number" class="input-xl" placeholder="Poi W" value="${p.meta.powerExt||''}" onchange="updateProjectMeta('powerExt',this.value)">
+                        </div>
+                    </div>
+                    <div style="flex:1; display:flex; gap:15px; justify-content:flex-end;">
+                        <div style="width:120px;">
+                            <div style="font-size:11px; font-weight:bold; margin-bottom:4px;">Laakerit Tulo</div>
+                            <select onchange="updateProjectMeta('bearingSup',this.value)" class="sel-xl">
+                                <option value="-" ${p.meta.bearingSup==='-'?'selected':''}>-</option>
+                                <option value="OK" ${p.meta.bearingSup==='OK'?'selected':''}>OK</option>
+                                <option value="Vaihdettu" ${p.meta.bearingSup==='Vaihdettu'?'selected':''}>Vaihdettu</option>
+                            </select>
+                        </div>
+                        <div style="width:120px;">
+                            <div style="font-size:11px; font-weight:bold; margin-bottom:4px;">Laakerit Poisto</div>
+                            <select onchange="updateProjectMeta('bearingExt',this.value)" class="sel-xl">
+                                <option value="-" ${p.meta.bearingExt==='-'?'selected':''}>-</option>
+                                <option value="OK" ${p.meta.bearingExt==='OK'?'selected':''}>OK</option>
+                                <option value="Vaihdettu" ${p.meta.bearingExt==='Vaihdettu'?'selected':''}>Vaihdettu</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-bottom:15px;">
+                <button class="tool-btn" style="background:#e3f2fd; border-color:#2196f3; color:#0d47a1;" onclick="showVisual()">🗺️ Avaa Kartta</button>
+                <button class="tool-btn" style="background:#e8f5e9; border-color:#4caf50; color:#1b5e20;" onclick="showAddValve()">➕ Lisää Venttiili</button>
+                <button class="tool-btn" onclick="openCreateAptAHUModal()">🏢 Asunnot</button>
+                <button class="tool-btn" onclick="showReportExcelStyle()">📄 Pöytäkirjat</button>
+                <button class="tool-btn" onclick="shareProjectData()">📤 Jaa</button>
+            </div>
+
+            <h4 style="margin:0; border-bottom:1px solid #ddd; padding-bottom:5px; font-size:14px;">Mittauspöytäkirja / Lista (${currentMode})</h4>
+            <div class="lists-container">
+                <div class="list-col" style="border-top: 3px solid #3498db;">
+                    <div style="padding:8px; background:#3498db; color:white; font-weight:bold; font-size:12px;">Tulo (${supplyValves.length})</div>
+                    <table class="mini-table">
+                        <thead><tr><th>Huone</th><th>Malli</th><th>K</th><th>As</th><th>Pa</th><th>l/s</th><th>Tav</th></tr></thead>
+                        <tbody>${supplyValves.length > 0 ? supplyValves.map(renderRow).join('') : '<tr><td colspan="7" style="text-align:center; padding:15px; color:#ccc;">Ei tuloventtiilejä</td></tr>'}</tbody>
+                    </table>
+                </div>
+                <div class="list-col" style="border-top: 3px solid #e74c3c;">
+                    <div style="padding:8px; background:#e74c3c; color:white; font-weight:bold; font-size:12px;">Poisto (${extractValves.length})</div>
+                    <table class="mini-table">
+                        <thead><tr><th>Huone</th><th>Malli</th><th>K</th><th>As</th><th>Pa</th><th>l/s</th><th>Tav</th></tr></thead>
+                        <tbody>${extractValves.length > 0 ? extractValves.map(renderRow).join('') : '<tr><td colspan="7" style="text-align:center; padding:15px; color:#ccc;">Ei poistoventtiilejä</td></tr>'}</tbody>
+                    </table>
+                </div>
             </div>
         </div>
     `;
-
-    container.innerHTML = html;
+    view.innerHTML = html;
 }
 function duplicateValve(index, e) { e.stopPropagation(); const count = prompt("Montako kopiota luodaan?", "1"); if(count && !isNaN(count)) { const p = projects.find(x => x.id === activeProjectId); const original = p.valves[index]; for(let i=0; i<parseInt(count); i++) { const copy = JSON.parse(JSON.stringify(original)); const numMatch = copy.room.match(/\d+$/); if(numMatch) { const nextNum = parseInt(numMatch[0]) + 1 + i; copy.room = copy.room.replace(/\d+$/, nextNum); } else { copy.room += ` (kopio ${i+1})`; } p.valves.push(copy); } saveData(); renderDetailsList(); } }
 
 function previewPhoto() { const file = document.getElementById('valvePhotoInput').files[0]; const preview = document.getElementById('valvePhotoPreview'); if (file) { const reader = new FileReader(); reader.onloadend = function() { const img = new Image(); img.src = reader.result; img.onload = function() { const canvas = document.createElement('canvas'); const ctx = canvas.getContext('2d'); const MAX_WIDTH = 300; const scaleSize = MAX_WIDTH / img.width; canvas.width = MAX_WIDTH; canvas.height = img.height * scaleSize; ctx.drawImage(img, 0, 0, canvas.width, canvas.height); currentPhotoData = canvas.toDataURL('image/jpeg', 0.7); preview.src = currentPhotoData; preview.style.display = 'block'; } }; reader.readAsDataURL(file); } else { preview.src = ""; preview.style.display = 'none'; currentPhotoData = null; } }
 
 function loadBackground(input) { const file = input.files[0]; if(file) { const reader = new FileReader(); reader.onload = function(e) { document.getElementById('view-visual').style.backgroundImage = `url('${e.target.result}')`; }; reader.readAsDataURL(file); } }
-
-function calcSFP() { const p = projects.find(x => x.id === activeProjectId); let sFlow = 0, eFlow = 0; p.valves.forEach(v => { const d = p.ducts.find(d=>d.id==v.parentDuctId); if(d && d.type === 'supply') sFlow += v.flow; else eFlow += v.flow; }); const maxFlow = Math.max(sFlow, eFlow); const pow = (parseFloat(p.meta.powerSup)||0) + (parseFloat(p.meta.powerExt)||0); let sfp = "-"; if(maxFlow > 0 && pow > 0) { sfp = ( (pow/1000) / (maxFlow/1000) ).toFixed(2); } document.getElementById('sfpDisplay').innerText = `SFP: ${sfp} (Tulo: ${sFlow.toFixed(0)}, Poisto: ${eFlow.toFixed(0)})`; }
 
 // --- LOGO HANDLING ---
 
@@ -1443,23 +1822,6 @@ function openModal(html) {
 
 function saveData() {
     localStorage.setItem('iv_projects', JSON.stringify(projects));
-}
-// --- APUFUNKTIO: TALLENNA PINTA-ALA JA KORKEUS (D2) ---
-function updateProjectMeta(field, value) {
-    const p = projects.find(x => x.id === activeProjectId);
-    if (!p) return;
-    if (!p.meta) p.meta = {};
-    
-    // Muutetaan numeroksi ja tallennetaan
-    p.meta[field] = parseFloat(value);
-    saveData();
-    
-    // Päivitetään näkymä heti, jotta D2-laskuri päivittyy
-    renderDetailsList(); 
-}
-// Yhteensopivuus: jotkin kohdat kutsuvat saveProjects()
-function saveProjects(){
-    try { saveData(); } catch(e) {}
 }
 
 function renderVisualContent() {
@@ -2787,33 +3149,67 @@ function createBranchHTML(p, duct, colorName){
                     const ov = document.getElementById('valve-modal-overlay');
                     if(ov){ ov.style.display = 'none'; ov.innerHTML = ''; }
                 }
-                function saveValveFromModal(idx){
-                    const p = projects.find(x => x.id === activeProjectId);
-                    if (!p || idx < 0 || idx >= p.valves.length) return;
-                    const v = p.valves[idx];
-                    const roomEl = document.getElementById(`valve-room-${idx}`);
-                    const flowEl = document.getElementById(`valve-flow-${idx}`);
-                    const targetEl = document.getElementById(`valve-target-${idx}`);
-                    const paEl = document.getElementById(`valve-pa-${idx}`);
-                    const posEl = document.getElementById(`valve-pos-${idx}`);
-                    if(roomEl) v.room = roomEl.value || '';
-                    if(flowEl){ const f = parseFloat(flowEl.value); if(!isNaN(f)) v.flow = f; }
-                    if(targetEl){ const t = parseFloat(targetEl.value); if(!isNaN(t)) v.target = t; }
-                    if(paEl){ const pval = parseFloat(paEl.value); if(!isNaN(pval)) v.measuredP = pval; else v.measuredP = null; }
-                    if(posEl){ let pos = parseFloat(posEl.value); if(!isNaN(pos)) { if(pos < -20) pos = -20; if(pos > 20) pos = 20; v.pos = Math.round(pos); } }
-                    const modelSel = document.getElementById(`valve-model-${idx}`);
-                    const sizeSel = document.getElementById(`valve-size-${idx}`);
-                    if(sizeSel){ const newType = sizeSel.value; if(newType) v.type = newType; }
-                    // Päivitä live-K laskenta, jos dataa saatavilla
-                    try { if (v.pos!==undefined && v.measuredP!==undefined) { v.flow = calculateFlowFromValve(v.type, v.pos, v.measuredP); } } catch(e) {}
-                    saveData();
-                    closeValvePanel();
-                    renderVisualContent();
-                    renderDetailsList();
+                // --- KORJAUS: Tallennus visuaalisesta popupista aktiiviseen tilaan ---
+function saveValveFromModal(idx){
+    const p = projects.find(x => x.id === activeProjectId);
+    if (!p) return;
+
+    // Varmistetaan tila
+    const currentMode = window.currentMode || 'home';
+    const valves = p.modes[currentMode].valves;
+
+    if (idx < 0 || idx >= valves.length) return;
+    const v = valves[idx];
+
+    // Haetaan arvot popupista
+    const roomEl = document.getElementById(`valve-room-${idx}`);
+    const flowEl = document.getElementById(`valve-flow-${idx}`);
+    const targetEl = document.getElementById(`valve-target-${idx}`);
+    const paEl = document.getElementById(`valve-pa-${idx}`);
+    const posEl = document.getElementById(`valve-pos-${idx}`);
+    const modelSel = document.getElementById(`valve-model-${idx}`);
+    const sizeSel = document.getElementById(`valve-size-${idx}`);
+
+    // Päivitetään venttiili
+    if(roomEl) v.room = roomEl.value || '';
+    if(flowEl){ const f = parseFloat(flowEl.value); if(!isNaN(f)) v.flow = f; }
+    if(targetEl){ const t = parseFloat(targetEl.value); if(!isNaN(t)) v.target = t; }
+    
+    if(paEl){ 
+        const pval = parseFloat(paEl.value); 
+        v.measuredP = !isNaN(pval) ? pval : null; 
+    }
+    
+    if(posEl){ 
+        let pos = parseFloat(posEl.value); 
+        if(!isNaN(pos)) { 
+            v.pos = Math.round(pos); 
+            
+            // Synkronoidaan asento muihin tiloihin (Jäätymisen esto)
+            ['home', 'away', 'boost'].forEach(m => {
+                if (p.modes[m] && p.modes[m].valves && p.modes[m].valves[idx]) {
+                    p.modes[m].valves[idx].pos = v.pos;
                 }
-                function editMachine(index) {
-                    showAddMachine();
-                }
+            });
+        } 
+    }
+
+    if(sizeSel){ const newType = sizeSel.value; if(newType) v.type = newType; }
+
+    // Lasketaan virtaus uudestaan, jos paine ja asento löytyy (Automaattilaskenta popupissa)
+    if (v.type && v.type !== 'PITOT' && v.pos !== undefined && v.measuredP !== null) {
+        const kFunc = (typeof getK === 'function') ? getK : defaultGetK;
+        const k = kFunc(v.type, v.pos);
+        v.flow = k * Math.sqrt(Math.max(0, v.measuredP));
+    }
+
+    saveData();
+    
+    // Sulje popup ja päivitä KAIKKI näkymät
+    closeValvePanel();
+    renderVisualContent(); // Päivittää kartan
+    renderDetailsList();   // Päivittää taustalla olevan listan, jos se näkyy
+}
 
                 function showValveMenu(idx){
                     const p = projects.find(x => x.id === activeProjectId);
@@ -3095,11 +3491,34 @@ function confirmAptFloor(ductId){
 }
 
 // Muokkaa venttiiliä: esitäytä mittauslomake ja mene mittausnäkymään
-function showEditValve(v) {
+// --- KORJAUS: Avaa muokkausikkuna oikeasta tilasta ---
+function showEditValve(v_ref) {
     const p = projects.find(x => x.id === activeProjectId);
     if (!p) return;
-    const idx = p.valves.indexOf(v);
+
+    // 1. Selvitetään mikä tila on päällä
+    const currentMode = window.currentMode || 'home';
+    const valves = p.modes[currentMode].valves;
+
+    // 2. Etsitään oikea venttiili aktiivisesta listasta
+    // (Visuaalinen näkymä saattaa antaa viittauksen vanhaan listaan, joten haemme indeksillä tai ID:llä)
+    let idx = -1;
+    
+    // Yritetään löytää venttiili, joka vastaa klikattua (verrataan ID:tä jos on, tai viittausta)
+    if (v_ref.id) {
+        idx = valves.findIndex(x => x.id === v_ref.id);
+    } 
+    // Jos ID puuttuu (vanhat projektit), yritetään täsmätä ominaisuudet
+    if (idx === -1) {
+        idx = valves.findIndex(x => x.room === v_ref.room && x.parentDuctId === v_ref.parentDuctId);
+    }
+    
+    // Jos ei vieläkään löydy (harvinaista), oletetaan että v_ref on jo oikeasta listasta
+    if (idx === -1) idx = valves.indexOf(v_ref);
+
     editingValveIndex = idx >= 0 ? idx : null;
+    const v = (idx >= 0) ? valves[idx] : v_ref;
+
     // Kentät
     const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val ?? ''; };
     set('roomName', v.room || '');
@@ -3108,28 +3527,35 @@ function showEditValve(v) {
     set('measuredP', v.measuredP);
     set('targetFlow', v.target);
     set('measuredFlow', v.flow);
+    
     populateDuctSelect();
-    const ductSel = document.getElementById('parentDuctId'); if (ductSel && v.parentDuctId) ductSel.value = v.parentDuctId;
+    const ductSel = document.getElementById('parentDuctId'); 
+    if (ductSel && v.parentDuctId) ductSel.value = v.parentDuctId;
+    
     // Malli/koko valinta
     const modelSel = document.getElementById('valveModelSelect');
     const sizeSel = document.getElementById('valveSizeSelect');
     const typeHidden = document.getElementById('valveType');
+    
     if (typeHidden) typeHidden.value = v.type || '';
+    
     if (modelSel && sizeSel && v.type) {
-        // Päivitä mallitaulukko
-        const modelName = valveIdToModelId[v.type];
+        const modelName = window.valveIdToModelId ? window.valveIdToModelId[v.type] : '';
         if (modelName) {
             modelSel.value = modelName;
-            updateSizeSelect();
+            updateSizeSelect(); // Päivittää koot
             sizeSel.value = v.type;
+        } else if (v.type === 'PITOT') {
+             modelSel.value = 'PITOT';
+             updateSizeSelect();
         }
-        updateLiveK();
+        if(typeof updateLiveK === 'function') updateLiveK();
     }
+    
     // Näytetään mittausnäkymä ja palataan visuaaliin tallennuksen jälkeen
     returnToVisual = true;
     showView('view-measure');
 }
-
 
 // --- LISÄÄ KONE (TALLENTAA YKSIKÖN) ---
 function saveMachine() {
@@ -3211,71 +3637,86 @@ function updateMachineInputLimits() {
 
 // 2. Avaa ikkunan ja nollaa kentät (TÄMÄ PUUTTUI AIEMMIN)
 function showAddMachine() {
+    const p = projects.find(x => x.id === activeProjectId);
+    if (!p) return;
+
+    // Varmistetaan tila
+    const currentMode = window.currentMode || 'home';
+    const machines = p.modes[currentMode].machines || [];
+    
+    // Haetaan nykyinen kone (tai luodaan oletus)
+    const m = machines.find(x => x.type === 'ahu') || machines[0] || { unit: 'pa', settingVal: '' };
+
     const title = document.getElementById('machineTitle'); 
-    if (title) title.innerText = 'Uusi IV-Kone';
+    if (title) title.innerText = `IV-Kone (${currentMode})`; // Näytetään mitä tilaa muokataan
     
-    const f = id => { const el = document.getElementById(id); if (el) el.value = ''; };
+    // Apufunktio arvon asettamiseen
+    const setVal = (id, val) => { 
+        const el = document.getElementById(id); 
+        if (el) el.value = (val !== undefined && val !== null) ? val : ''; 
+    };
     
-    f('machineName'); 
-    f('machineValue'); 
-    f('machineSupPct'); 
-    f('machineExtPct'); 
-    f('machineSupplyQ'); 
-    f('machineExtractQ');
+    setVal('machineName', m.name || 'IV-Kone');
+    setVal('machineValue', m.settingVal); 
     
-    // Aseta oletusyksikkö Pa
+    // Aseta yksikkö
     const unitSel = document.getElementById('machineUnit');
     if(unitSel) {
-        unitSel.value = 'pa'; 
-        updateMachineInputLimits(); // Päivitä tekstit heti
+        unitSel.value = m.unit || 'pa'; 
+        // Päivitetään placeholderit heti
+        updateMachineInputLimits();
     }
 
     showView('view-add-machine');
 }
-
 // 3. Tallentaa koneen tiedot
 function saveMachine() {
     const p = projects.find(x => x.id === activeProjectId);
     if (!p) return;
-    if (!p.machines) p.machines = [];
+
+    // Varmistetaan aktiivinen tila
+    const currentMode = window.currentMode || 'home';
     
+    // Varmistetaan, että tilalla on omat koneet -lista
+    if (!p.modes[currentMode].machines) {
+        // Jos puuttuu, kopioidaan pohjaksi tyhjä tai olemassa oleva rakenne
+        p.modes[currentMode].machines = []; 
+    }
+    const machines = p.modes[currentMode].machines;
+
+    // Haetaan HTML-elementit
     const elUnit = document.getElementById('machineUnit');
     const elVal = document.getElementById('machineValue');
     const elName = document.getElementById('machineName');
 
     if (!elUnit || !elVal) {
-        alert("Virhe: Kenttiä ei löytynyt HTML:stä. Päivitä sivu (F5).");
+        alert("Virhe: Kenttiä ei löytynyt.");
         return;
     }
 
     const unit = elUnit.value; 
-    const val = elVal.value;
-    const type = document.getElementById('machineType') ? document.getElementById('machineType').value : '';
-    
-    let calcMode = 'speed';
-    if (unit === 'pa') calcMode = 'pressure';
+    let val = parseFloat(elVal.value); // Muutetaan numeroksi
+    const name = elName.value || "IV-Kone";
 
-    p.machines.push({
-        name: elName.value || "IV-Kone",
-        type: type,
-        unit: unit,          
-        settingVal: val,     
-        controlMode: calcMode,
-        // Fallback-kentät
-        supQ: document.getElementById('machineSupplyQ') ? document.getElementById('machineSupplyQ').value : '',
-        extQ: document.getElementById('machineExtractQ') ? document.getElementById('machineExtractQ').value : '',
-        speed: val 
-    });
+    // Jos kenttä on tyhjä, tallennetaan null eikä NaN
+    if (elVal.value === "") val = null;
 
-    if (type === 'roof_fan') {
-        if (!p.ducts) p.ducts = [];
-        const hasFresh = p.ducts.find(d => (d.name||'').includes("Korvausilma"));
-        if (!hasFresh) {
-            p.ducts.push({ id: Date.now(), name: "Korvausilma", type: "supply", size: 0 });
-        }
+    // Etsitään tämän tilan kone tai luodaan uusi
+    let machine = machines.find(m => m.type === 'ahu');
+    if (!machine) {
+        machine = { type: 'ahu', id: Date.now() };
+        machines.push(machine);
     }
-    
+
+    // Päivitetään arvot VAIN tähän tilaan
+    machine.name = name;
+    machine.unit = unit;          // 'pa', 'hz', tai 'pct'
+    machine.settingVal = val;     // Tallennettu arvo (voi olla null)
+    machine.controlMode = (unit === 'pa') ? 'pressure' : 'speed';
+
     saveData();
+    
+    // Päivitetään näkymät
     showView('view-details');
     renderDetailsList();
 }
@@ -3400,17 +3841,6 @@ function deleteCurrentProject(){
 }
 
 // Pikapoisto venttiilille vaakavisualista
-function deleteValveByIndex(idx){
-    const p = projects.find(x => x.id === activeProjectId);
-    if(!p) return;
-    if(idx<0 || idx>=p.valves.length) return;
-    if(confirm('Poistetaanko venttiili?')){
-        p.valves.splice(idx,1);
-        saveData();
-        renderVisualContent();
-        renderDetailsList();
-    }
-}
 
 // Initialize order array for a duct if missing; store indices of project-level valves
 function ensureValveOrder(p, ductId, valves){
@@ -3545,142 +3975,21 @@ function defaultGetK(type, pos){
 }
 
 
-// --- LISÄÄ VENTTIILI & KÄSITTELE "LUO UUSI RUNKO" -VALINTA ---
-function calculateAndSave(next=false){
-    const p = projects.find(x => x.id === activeProjectId);
-    if(!p) return;
-    
-    if (!p.ducts) p.ducts = [];
-    if (!p.valves) p.valves = [];
 
-    const apt = document.getElementById('apartmentName').value || '';
-    const room = document.getElementById('roomName').value || 'Huone';
-    const type = document.getElementById('valveType').value || '';
-    
-    // Luetaan valinta (voi olla ID, "", "CREATE_NEW_SUPPLY" tai "CREATE_NEW_EXTRACT")
-    const selectedVal = document.getElementById('parentDuctId').value;
-    
-    const target = parseFloat(document.getElementById('targetQ').value)||0;
-    const paVal = document.getElementById('measuredP').value;
-    const pa = (paVal === "" || paVal === null) ? null : parseFloat(paVal);
-    const pos = parseFloat(document.getElementById('currentPos').value)||0;
-    
-    let finalParentId = null;
-
-    // --- LOGIIKKA: VALINNAN KÄSITTELY ---
-    
-    // Tapaus 1: Käyttäjä haluaa luoda uuden rungon valikosta
-    if (selectedVal === "CREATE_NEW_SUPPLY" || selectedVal === "CREATE_NEW_EXTRACT") {
-        const isSupply = (selectedVal === "CREATE_NEW_SUPPLY");
-        const ductType = isSupply ? 'supply' : 'extract';
-        
-        // Lasketaan numero nimeä varten
-        const count = p.ducts.filter(d => d.type === ductType && d.group === 'ahu').length + 1;
-        const newName = `${isSupply ? 'Tulo' : 'Poisto'} ${count}`;
-        
-        // Luodaan uusi runko
-        const newDuct = {
-            id: Math.floor(Date.now() + Math.random()*1000),
-            name: newName,
-            type: ductType,
-            size: 125,
-            group: 'ahu'
-        };
-        p.ducts.push(newDuct);
-        
-        finalParentId = newDuct.id;
-        
-    } 
-    // Tapaus 2: Käyttäjä valitsi olemassa olevan rungon
-    else if (selectedVal && selectedVal !== "") {
-        const targetDuct = p.ducts.find(d => d.id == selectedVal);
-        if (targetDuct) finalParentId = targetDuct.id;
-    }
-    
-    // Tapaus 3: Valinta tyhjä -> Automaattipäättely (Fallback)
-    if (!finalParentId) {
-        // ... (Vanha automaattilogiikka säilyy varalla) ...
-        let isSupply = false;
-        let nameToCheck = (window.valveIdToModelId && window.valveIdToModelId[type]) ? window.valveIdToModelId[type] : type;
-        nameToCheck = nameToCheck.toLowerCase();
-        if (nameToCheck.includes("tulo") || nameToCheck.includes("kts") || nameToCheck.includes("fresh") || nameToCheck.includes("supply") || nameToCheck.includes("korvaus")) {
-            isSupply = true;
-        }
-        
-        const ductType = isSupply ? 'supply' : 'extract';
-        const ductName = isSupply ? 'Automaatti Tulo' : 'Automaatti Poisto';
-        
-        let autoDuct = p.ducts.find(d => d.group === 'ahu' && d.type === ductType && d.name === ductName);
-        if (!autoDuct) {
-            autoDuct = { id: Date.now(), name: ductName, type: ductType, size: 125, group: 'ahu' };
-            p.ducts.push(autoDuct);
-        }
-        finalParentId = autoDuct.id;
-    }
-    
-    // 3. LASKENTA
-    let flow = 0;
-    if (type === 'PITOT') {
-        const manualFlow = parseFloat(document.getElementById('measuredFlow').value);
-        if (isNaN(manualFlow)) { alert("Virhe: Syötä virtaus!"); return; }
-        flow = manualFlow;
-    } else {
-        if(type && !isNaN(pos) && pa!==null){
-            const kFunc = (typeof getK === 'function') ? getK : defaultGetK;
-            flow = kFunc(type, pos) * Math.sqrt(Math.max(0, pa));
-        }
-    }
-
-    // 4. TALLENNUS
-    const newVal = { 
-        apartment: apt||undefined, 
-        room, type, target, flow, pos, measuredP: pa, 
-        parentDuctId: Number(finalParentId) // Varmistetaan numero
-    };
-
-    if (editingValveIndex !== null && editingValveIndex >= 0) {
-        p.valves[editingValveIndex] = newVal;
-        editingValveIndex = null;
-    } else {
-        p.valves.push(newVal);
-    }
-
-    saveData();
-    
-    // UI Palaute
-    const resDiv = document.getElementById('calcResult');
-    if(resDiv) { resDiv.style.display = 'block'; resDiv.innerText = `Tallennettu: ${flow.toFixed(1)} l/s`; }
-
-    if(next){
-        document.getElementById('roomName').value = '';
-        document.getElementById('measuredP').value = '';
-        document.getElementById('currentPos').value = '';
-        const flowIn = document.getElementById('measuredFlow');
-        if(flowIn) flowIn.value = '';
-        if(typeof updateLiveK === 'function') updateLiveK();
-        // Päivitä valikko, jotta uusi runko näkyy siellä heti
-        populateDuctSelect(); 
-        // Asetetaan valinta äsken luotuun runkoon, jotta seuraava venttiili menee samaan
-        document.getElementById('parentDuctId').value = finalParentId;
-    } else {
-        if(returnToVisual) {
-            returnToVisual = false;
-            if(typeof showVisual === 'function') showVisual(); else { renderVisualContent(); showView('view-visual'); }
-        } else {
-            showView('view-details');
-            if(typeof renderDetailsList === 'function') renderDetailsList();
-        }
-    }
-}
-// --- PÖYTÄKIRJAT ---
 // --- PÖYTÄKIRJAT JA RAPORTOINTI (FINAL VERSION) ---
 
+// --- KORJAUS: Pöytäkirjat lukemaan aktiivista tilaa ---
 function buildReportData(){
     const p = projects.find(x => x.id === activeProjectId);
     if(!p) return { ahu: [], roof: [], measuredDucts: [] };
     
+    // 1. Määritetään aktiivinen tila
+    const currentMode = window.currentMode || 'home';
+    
+    // 2. Haetaan venttiilit TÄSTÄ tilasta
+    const valves = (p.modes && p.modes[currentMode]) ? p.modes[currentMode].valves : (p.valves || []);
+    
     const ducts = p.ducts||[];
-    const valves = p.valves||[];
     
     // Erotellaan ryhmät
     const ahuDuctIds = ducts.filter(d=>d.group==='ahu' || d.group==='apt').map(d=>d.id);
@@ -3690,12 +3999,11 @@ function buildReportData(){
     const ahuValves = valves.filter(v=>ahuDuctIds.includes(v.parentDuctId));
     const roofValves = valves.filter(v=>roofDuctIds.includes(v.parentDuctId));
     
-    // Rungot, joissa on mittausdataa (measuredFlow)
+    // Rungot, joissa on mittausdataa
     const measuredDucts = ducts.filter(d => d.measuredFlow !== undefined && d.measuredFlow !== null && d.measuredFlow !== "");
     
     return { ahu: ahuValves, roof: roofValves, measuredDucts: measuredDucts };
 }
-
 // Apufunktio: Muotoile rivi raporttiin (käsittelee Pitot-erikoistapaukset)
 function formatReportRow(v, p) {
     const isPitot = v.type === 'PITOT';
@@ -3768,132 +4076,412 @@ function addReportHeader(doc, p) {
     doc.setTextColor(0); // Musta väri takaisin taulukoita varten
     return y + 5; // Palauttaa Y-koordinaatin mistä taulukko alkaa
 }
-
-// Tulosta AHU-pöytäkirja (PDF)
-function printReportAHU(){
+// --- UUSI EXCEL-TYYLINEN PÖYTÄKIRJA (MATRIISI) ---
+// --- UUSI EXCEL-TYYLINEN PÖYTÄKIRJA (PDF) - PÄIVITETTY ---
+// --- UUSI EXCEL-TYYLINEN PÖYTÄKIRJA (PDF) - FINAL ---
+// --- UUSI EXCEL-TYYLINEN PÖYTÄKIRJA (PDF) - FINAL V4 ---
+function printReportExcelStyle() {
     const { jsPDF } = window.jspdf || {};
-    if(!jsPDF){ alert('PDF-kirjasto puuttuu'); return; }
-    
-    const p = projects.find(x => x.id === activeProjectId);
-    const data = buildReportData();
-    const doc = new jsPDF();
-    
-    // 1. Luodaan otsikko lisätietoineen
-    let startY = addReportHeader(doc, p);
-    
-    doc.setFontSize(12);
-    doc.setFont(undefined, 'bold');
-    doc.text("Tulo- ja poistoilmakanavisto", 10, startY);
-    doc.setFont(undefined, 'normal');
-    startY += 6;
+    if (!jsPDF) { alert('PDF-kirjasto puuttuu'); return; }
 
-    // 2. Runkomittaukset (Jos on)
-    const ahDucts = data.measuredDucts.filter(d => d.group === 'ahu');
+    const p = projects.find(x => x.id === activeProjectId);
+    if (!p) return;
+
+    const currentMode = window.currentMode || 'home';
+    const valves = (p.modes && p.modes[currentMode]) ? p.modes[currentMode].valves : (p.valves || []);
+    const meta = p.meta || {};
     
-    if (ahDucts.length > 0) {
-        doc.setFontSize(10);
-        doc.text("Runkokanavien mittaukset (Pitot)", 10, startY);
-        startY += 4;
-        
-        const dRows = ahDucts.map(d => {
-            const sumValves = p.valves.filter(v=>v.parentDuctId===d.id).reduce((a,b)=>a+(parseFloat(b.flow)||0),0);
-            const diff = d.measuredFlow - sumValves;
-            const diffPct = d.measuredFlow > 0 ? (diff/d.measuredFlow)*100 : 0;
-            return [d.name, d.measuredFlow.toFixed(1), sumValves.toFixed(1), `${diff.toFixed(1)} (${diffPct.toFixed(0)}%)`];
-        });
-        
-        doc.autoTable({
-            head: [['Runko', 'Mitattu (l/s)', 'Venttiilit yht.', 'Erotus']],
-            body: dRows,
-            startY: startY,
-            theme: 'striped',
-            headStyles: { fillColor: [200, 200, 200], textColor: 0 }
-        });
-        startY = doc.lastAutoTable.finalY + 10;
+    // Kone
+    const machine = (p.modes && p.modes[currentMode] && p.modes[currentMode].machines) 
+                    ? p.modes[currentMode].machines.find(m => m.type === 'ahu') 
+                    : (p.machines || []).find(m => m.type === 'ahu');
+    let machineSetting = "-";
+    if (machine) {
+        const u = machine.unit || '%';
+        const v = machine.settingVal || '-';
+        if (u === 'pa') machineSetting = `${v} Pa`;
+        else if (u === 'hz') machineSetting = `${v} Hz`;
+        else machineSetting = `${v} %`;
     }
 
-    // 3. Venttiilit
-    doc.setFontSize(10);
-    doc.text("Venttiilikohtaiset mittaukset", 10, startY);
-    startY += 4;
+    const doc = new jsPDF('l', 'mm', 'a4');
+    const pageWidth = doc.internal.pageSize.width;
 
-    const rows = data.ahu.map(v => {
-        const r = formatReportRow(v, p);
-        return [r.room, r.model, r.duct, r.pa, r.pos, r.flow, r.target];
+    // Header
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(14);
+    doc.text("ILMAMÄÄRIEN MITTAUSPÖYTÄKIRJA", pageWidth / 2, 15, { align: "center" });
+    doc.setLineWidth(0.5);
+    doc.line(pageWidth / 2 - 40, 16, pageWidth / 2 + 40, 16);
+
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+
+    let y = 30;
+    const col1 = 20, col2 = 80, col3 = 160, col4 = 220;
+
+    // Vasen
+    doc.text("Kohde:", col1, y);      doc.text(meta.location || "-", col2, y);
+    doc.line(col2, y + 1, col3 - 10, y + 1);
+    y += 7;
+    doc.text("Osoite:", col1, y);     doc.text(meta.address || "-", col2, y);
+    doc.line(col2, y + 1, col3 - 10, y + 1);
+    y += 7;
+    doc.text("Konemalli:", col1, y);  doc.text((machine ? machine.name : "IV-Kone"), col2, y);
+    doc.line(col2, y + 1, col3 - 10, y + 1);
+
+    // Oikea
+    y = 30;
+    doc.text("Mittaaja:", col3, y);   doc.text(meta.measurer || "-", col4, y);
+    doc.line(col4, y + 1, pageWidth - 20, y + 1);
+    y += 7;
+    doc.text("Yritys:", col3, y);     doc.text(meta.company || "-", col4, y);
+    doc.line(col4, y + 1, pageWidth - 20, y + 1);
+    y += 7;
+    doc.text("Mittari:", col3, y);    doc.text(meta.device || "-", col4, y);
+    doc.line(col4, y + 1, pageWidth - 20, y + 1);
+    y += 7;
+    doc.text("Päivämäärä:", col3, y); doc.text(meta.date || new Date().toLocaleDateString('fi-FI'), col4, y);
+    doc.line(col4, y + 1, pageWidth - 20, y + 1);
+
+    // Data
+    const rooms = {};
+    const ducts = p.ducts || [];
+    const getDir = (v) => {
+        const d = ducts.find(d => d.id == v.parentDuctId);
+        if (d && d.type === 'supply') return 'supply';
+        if (d && d.type === 'extract') return 'extract';
+        const name = (v.type || '').toLowerCase();
+        if (name.includes('tulo') || name.includes('kts') || name.includes('supply')) return 'supply';
+        return 'extract';
+    };
+    valves.forEach(v => {
+        let uniqueName = v.room || "Muu tila";
+        if (v.apartment) uniqueName = `${v.apartment} ${uniqueName}`;
+        uniqueName = uniqueName.trim();
+        if (!rooms[uniqueName]) rooms[uniqueName] = { label: uniqueName, supply: [], extract: [] };
+        const dir = getDir(v);
+        rooms[uniqueName][dir].push(v);
     });
-    
-    doc.autoTable({ 
-        head: [['Huone','Malli','Runko','Pa','Asento','L/s','Tav']], 
-        body: rows, 
-        startY: startY,
-        theme: 'grid'
+
+    const tableBody = [];
+    let grandTotSupFlow = 0, grandTotSupTarget = 0, grandTotExtFlow = 0, grandTotExtTarget = 0;
+    const sortedRooms = Object.keys(rooms).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+
+    sortedRooms.forEach(key => {
+        const r = rooms[key];
+        const rowsNeeded = Math.max(r.supply.length, r.extract.length, 1);
+        for (let i = 0; i < rowsNeeded; i++) {
+            const sup = r.supply[i] || null;
+            const ext = r.extract[i] || null;
+            let sModel="", sK="", sPa="", sPos="", sFlow="", sTarget="", sPct="";
+            if (sup) {
+                sModel = formatValveDisplay(sup.type);
+                sPos = (sup.pos !== null) ? Math.round(sup.pos) : "-";
+                sPa = (sup.measuredP !== null) ? sup.measuredP : "-";
+                if(sup._calcK) sK = sup._calcK.toFixed(2);
+                else { const kFunc = (typeof getK === 'function') ? getK : defaultGetK; sK = (sup.type && sup.pos!==null) ? kFunc(sup.type, sup.pos).toFixed(2) : "-"; }
+                const f = parseFloat(sup.flow)||0; const t = parseFloat(sup.target)||0;
+                sFlow = f.toFixed(1); sTarget = t > 0 ? t.toFixed(1) : "-"; sPct = (t > 0 && f > 0) ? Math.round((f/t)*100) + " %" : "-";
+                grandTotSupFlow += f; grandTotSupTarget += t;
+            }
+            let eModel="", eK="", ePa="", ePos="", eFlow="", eTarget="", ePct="";
+            if (ext) {
+                eModel = formatValveDisplay(ext.type);
+                ePos = (ext.pos !== null) ? Math.round(ext.pos) : "-";
+                ePa = (ext.measuredP !== null) ? ext.measuredP : "-";
+                if(ext._calcK) eK = ext._calcK.toFixed(2);
+                else { const kFunc = (typeof getK === 'function') ? getK : defaultGetK; eK = (ext.type && ext.pos!==null) ? kFunc(ext.type, ext.pos).toFixed(2) : "-"; }
+                const f = parseFloat(ext.flow)||0; const t = parseFloat(ext.target)||0;
+                eFlow = f.toFixed(1); eTarget = t > 0 ? t.toFixed(1) : "-"; ePct = (t > 0 && f > 0) ? Math.round((f/t)*100) + " %" : "-";
+                grandTotExtFlow += f; grandTotExtTarget += t;
+            }
+            tableBody.push([ (i === 0) ? r.label : "", sup ? "1" : "", sModel, sK, sPa, sPos, sFlow, sTarget, sPct, ext ? "1" : "", eModel, eK, ePa, ePos, eFlow, eTarget, ePct ]);
+        }
     });
+
+    const totSupPct = grandTotSupTarget > 0 ? Math.round((grandTotSupFlow/grandTotSupTarget)*100) + " %" : "-";
+    const totExtPct = grandTotExtTarget > 0 ? Math.round((grandTotExtFlow/grandTotExtTarget)*100) + " %" : "-";
+    const totalRow = [ "Yhteensä", "", "", "", "", "", grandTotSupFlow.toFixed(1), grandTotSupTarget.toFixed(1), totSupPct, "", "", "", "", "", grandTotExtFlow.toFixed(1), grandTotExtTarget.toFixed(1), totExtPct ];
+
+    doc.autoTable({
+        startY: 65,
+        head: [ [{ content: 'Huonetila', rowSpan: 2, styles: { valign: 'middle', halign: 'left' } }, { content: 'Tulo', colSpan: 8, styles: { halign: 'center', fillColor: [220, 230, 241], textColor:0 } }, { content: 'Poisto', colSpan: 8, styles: { halign: 'center', fillColor: [242, 220, 219], textColor:0 } }], ['kpl', 'Päätelaite', 'K', 'Pa', 'As', 'Mit', 'Suun', '%', 'kpl', 'Päätelaite', 'K', 'Pa', 'As', 'Mit', 'Suun', '%'] ],
+        body: [...tableBody, totalRow],
+        theme: 'grid',
+        styles: { fontSize: 8, cellPadding: 1.5, lineColor: [0, 0, 0], lineWidth: 0.1, textColor: [0,0,0] },
+        headStyles: { fillColor: [255, 255, 255], textColor: [0, 0, 0], fontStyle: 'bold', lineWidth: 0.1 },
+        columnStyles: { 0: { fontStyle: 'bold', cellWidth: 35 }, 1: { cellWidth: 7, halign: 'center' }, 2: { cellWidth: 18 }, 3: { cellWidth: 9, halign: 'center' }, 4: { cellWidth: 9, halign: 'center' }, 5: { cellWidth: 9, halign: 'center' }, 6: { cellWidth: 12, halign: 'center', fontStyle: 'bold' }, 7: { cellWidth: 12, halign: 'center' }, 8: { cellWidth: 10, halign: 'center' }, 9: { cellWidth: 7, halign: 'center' }, 10: { cellWidth: 18 }, 11: { cellWidth: 9, halign: 'center' }, 12: { cellWidth: 9, halign: 'center' }, 13: { cellWidth: 9, halign: 'center' }, 14: { cellWidth: 12, halign: 'center', fontStyle: 'bold' }, 15: { cellWidth: 12, halign: 'center' }, 16: { cellWidth: 10, halign: 'center' } },
+        didParseCell: function(data) { if (data.row.index === tableBody.length) { data.cell.styles.fontStyle = 'bold'; data.cell.styles.fillColor = [230, 230, 230]; } }
+    });
+
+    // --- ALAPALKKI ---
+    let sfpStr = "-";
+    if ((meta.powerSup||0) + (meta.powerExt||0) > 0) {
+        const maxQ = Math.max(grandTotSupFlow, grandTotExtFlow);
+        if (maxQ > 0) sfpStr = (((meta.powerSup||0) + (meta.powerExt||0)) / 1000 / (maxQ/1000)).toFixed(2);
+    }
     
-    addSignatureToPDF(doc);
+    let d2Str = "-";
+    if (meta.area > 0) {
+        const req = (meta.area * (meta.height||2.5) * 0.5) / 3.6;
+        const pct = (grandTotExtFlow / req) * 100;
+        d2Str = `${pct.toFixed(0)}%`;
+    }
+
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "bold");
+    doc.text(`Mitattu teholla: ${machineSetting}`, 14, 63);
+
+    let bottomY = doc.lastAutoTable.finalY + 10;
     
-    doc.save(`poytakirja_${p.name.replace(/[^a-z0-9]/gi, '_')}.pdf`);
+    doc.text(`SFP-luku: ${sfpStr} kW/(m³/s)`, 14, bottomY);
+    doc.text(`D2-täyttöaste: ${d2Str}`, 80, bottomY);
+    doc.text(`Laakerit (Tulo): ${meta.bearingSup || '-'}`, 140, bottomY);
+    doc.text(`Laakerit (Poisto): ${meta.bearingExt || '-'}`, 200, bottomY);
+
+    // Muuta huomioitavaa
+    if (meta.remarks) {
+        bottomY += 8;
+        doc.text("Muuta huomioitavaa:", 14, bottomY);
+        doc.setFont("helvetica", "normal");
+        // Split text to fit
+        const splitText = doc.splitTextToSize(meta.remarks, pageWidth - 30);
+        doc.text(splitText, 14, bottomY + 5);
+        bottomY += (splitText.length * 5) + 5;
+    } else {
+        bottomY += 10;
+    }
+
+    // Allekirjoitus (otetaan esikatselu-ikkunan canvasista joka on näkyvillä)
+    const canvas = document.getElementById('signaturePadReportView');
+    if (canvas) {
+        try {
+            const imgData = canvas.toDataURL('image/png');
+            const blank = document.createElement('canvas');
+            blank.width = canvas.width; blank.height = canvas.height;
+            if (canvas.toDataURL() !== blank.toDataURL()) {
+                if (bottomY + 30 > 200) { doc.addPage(); bottomY = 20; }
+                doc.setFont("helvetica", "bold");
+                doc.text("Allekirjoitus:", 14, bottomY + 5);
+                doc.addImage(imgData, 'PNG', 14, bottomY + 8, 50, 20);
+            }
+        } catch(e) {}
+    }
+
+    doc.save(`Poytakirja_${p.name.replace(/[^a-z0-9]/gi, '_')}.pdf`);
 }
-
-// Tulosta Huippuimuri-pöytäkirja (PDF)
-function printReportRoof(){
-    const { jsPDF } = window.jspdf || {};
-    if(!jsPDF){ alert('PDF-kirjasto puuttuu'); return; }
-    
+// --- UUSI: EXCEL-TYYLINEN RAPORTTI NÄYTÖLLE (HTML) ---
+// --- UUSI: EXCEL-TYYLINEN RAPORTTI NÄYTÖLLE (PÄIVITETTY HEADER) ---
+// --- UUSI: EXCEL-TYYLINEN RAPORTTI NÄYTÖLLE (PÄIVITETTY) ---
+function showReportExcelStyle() {
     const p = projects.find(x => x.id === activeProjectId);
-    const data = buildReportData();
-    const doc = new jsPDF();
-    
-    let startY = addReportHeader(doc, p);
-    
-    doc.setFontSize(12);
-    doc.setFont(undefined, 'bold');
-    doc.text("Huippuimurit / Kerrostalo", 10, startY);
-    doc.setFont(undefined, 'normal');
-    startY += 6;
+    if (!p) return;
 
-    // 1. Runkomittaukset
-    const roofDucts = data.measuredDucts.filter(d => d.group === 'roof');
-    if (roofDucts.length > 0) {
-        doc.setFontSize(10);
-        doc.text("Rappujen/Imurien mittaukset", 10, startY);
-        startY += 4;
-        
-        const dRows = roofDucts.map(d => {
-            const sumValves = p.valves.filter(v=>v.parentDuctId===d.id).reduce((a,b)=>a+(parseFloat(b.flow)||0),0);
-            const diff = d.measuredFlow - sumValves;
-            return [d.name, d.measuredFlow.toFixed(1), sumValves.toFixed(1), diff.toFixed(1)];
-        });
-        
-        doc.autoTable({
-            head: [['Rappu/Runko', 'Mitattu (Pitot)', 'Venttiilit yht.', 'Erotus']],
-            body: dRows,
-            startY: startY,
-            theme: 'striped',
-            headStyles: { fillColor: [200, 200, 200], textColor: 0 }
-        });
-        startY = doc.lastAutoTable.finalY + 10;
+    const currentMode = window.currentMode || 'home';
+    const valves = (p.modes && p.modes[currentMode]) ? p.modes[currentMode].valves : (p.valves || []);
+    const meta = p.meta || {};
+    
+    const machine = (p.modes && p.modes[currentMode] && p.modes[currentMode].machines) 
+                    ? p.modes[currentMode].machines.find(m => m.type === 'ahu') 
+                    : (p.machines || []).find(m => m.type === 'ahu');
+    let machineSetting = "-";
+    if (machine) {
+        const u = machine.unit || '%';
+        const v = machine.settingVal || '-';
+        if (u === 'pa') machineSetting = `${v} Pa`;
+        else if (u === 'hz') machineSetting = `${v} Hz`;
+        else machineSetting = `${v} %`;
     }
-    
-    // 2. Venttiilit
-    doc.setFontSize(10);
-    doc.text("Venttiilikohtaiset mittaukset", 10, startY);
-    startY += 4;
 
-    const rows = data.roof.map(v => {
-        const r = formatReportRow(v, p);
-        return [v.apartment||'-', r.room, r.model, r.pa, r.pos, r.flow, r.target];
+    const dateStr = meta.date || new Date().toLocaleDateString('fi-FI');
+    const container = document.getElementById('reportContent');
+
+    // SFP ja D2 (Näytölle)
+    const reqFlow = (meta.area > 0) ? (meta.area * (meta.height||2.5) * 0.5) / 3.6 : 0;
+    
+    // Lasketaan kokonaisvirtaama (jotta SFP voidaan laskea tässä näkymässä)
+    let gSup=0, gExt=0;
+    valves.forEach(v=>{
+        const d = (p.ducts||[]).find(d=>d.id==v.parentDuctId);
+        let isSup = false;
+        if(d && d.type==='supply') isSup=true;
+        else if((v.type||'').toLowerCase().includes('tulo')) isSup=true;
+        if(isSup) gSup+=(parseFloat(v.flow)||0); else gExt+=(parseFloat(v.flow)||0);
     });
-    
-    doc.autoTable({ 
-        head: [['Asunto','Huone','Malli','Pa','Asento','L/s','Tav']], 
-        body: rows, 
-        startY: startY,
-        theme: 'grid'
+
+    let sfpStr = "-";
+    if ((meta.powerSup||0) + (meta.powerExt||0) > 0) {
+        const maxQ = Math.max(gSup, gExt);
+        if (maxQ > 0) sfpStr = (((meta.powerSup||0) + (meta.powerExt||0)) / 1000 / (maxQ/1000)).toFixed(2);
+    }
+    let d2Str = "-";
+    if (reqFlow > 0) {
+        const pct = (gExt / reqFlow) * 100;
+        d2Str = `${pct.toFixed(0)}% (Tavoite ${reqFlow.toFixed(0)} l/s)`;
+    }
+
+    let html = `
+        <div style="background:#fff; padding:20px; box-shadow:0 2px 10px rgba(0,0,0,0.1);">
+            <div style="text-align:center; margin-bottom:20px; border-bottom:2px solid #333; padding-bottom:10px;">
+                <h2 style="margin:0;">ILMAMÄÄRIEN MITTAUSPÖYTÄKIRJA</h2>
+            </div>
+            
+            <div style="display:flex; gap:40px; margin-bottom:20px; font-size:13px;">
+                <div style="flex:1;">
+                    <div style="display:grid; grid-template-columns: 80px 1fr; gap:5px; border-bottom:1px solid #eee; padding:2px 0;"><b>Kohde:</b> <span>${meta.location || '-'}</span></div>
+                    <div style="display:grid; grid-template-columns: 80px 1fr; gap:5px; border-bottom:1px solid #eee; padding:2px 0;"><b>Osoite:</b> <span>${meta.address || '-'}</span></div>
+                    <div style="display:grid; grid-template-columns: 80px 1fr; gap:5px; border-bottom:1px solid #eee; padding:2px 0;"><b>Konemalli:</b> <span>${machine ? machine.name : 'IV-Kone'}</span></div>
+                    <div style="display:grid; grid-template-columns: 80px 1fr; gap:5px; border-bottom:1px solid #eee; padding:2px 0;"><b>Teho:</b> <span>${machineSetting}</span></div>
+                </div>
+                <div style="flex:1;">
+                    <div style="display:grid; grid-template-columns: 100px 1fr; gap:5px; border-bottom:1px solid #eee; padding:2px 0;"><b>Mittaaja:</b> <span>${meta.measurer || '-'}</span></div>
+                    <div style="display:grid; grid-template-columns: 100px 1fr; gap:5px; border-bottom:1px solid #eee; padding:2px 0;"><b>Yritys:</b> <span>${meta.company || '-'}</span></div>
+                    <div style="display:grid; grid-template-columns: 100px 1fr; gap:5px; border-bottom:1px solid #eee; padding:2px 0;"><b>Mittari:</b> <span>${meta.device || '-'}</span></div>
+                    <div style="display:grid; grid-template-columns: 100px 1fr; gap:5px; border-bottom:1px solid #eee; padding:2px 0;"><b>Päivämäärä:</b> <span>${dateStr}</span></div>
+                </div>
+            </div>
+
+            <style>
+                .rep-table { width:100%; border-collapse:collapse; font-size:11px; }
+                .rep-table th, .rep-table td { border:1px solid #ccc; padding:4px; text-align:center; }
+                .rep-table th { background:#f0f0f0; }
+                .rep-head-sup { background:#e1f5fe !important; }
+                .rep-head-ext { background:#ffebee !important; }
+                .rep-bold { font-weight:bold; }
+                .rep-left { text-align:left !important; }
+            </style>
+
+            <table class="rep-table">
+                <thead>
+                    <tr>
+                        <th rowspan="2" class="rep-left" style="width:150px;">Huonetila</th>
+                        <th colspan="8" class="rep-head-sup">Tulo</th>
+                        <th colspan="8" class="rep-head-ext">Poisto</th>
+                    </tr>
+                    <tr>
+                        <th style="width:20px;">kpl</th> <th>Päätelaite</th> <th>K</th> <th>Pa</th> <th>As</th> <th>Mit</th> <th>Suun</th> <th>%</th>
+                        <th style="width:20px;">kpl</th> <th>Päätelaite</th> <th>K</th> <th>Pa</th> <th>As</th> <th>Mit</th> <th>Suun</th> <th>%</th>
+                    </tr>
+                </thead>
+                <tbody>
+    `;
+
+    // Datankäsittely
+    const rooms = {};
+    const ducts = p.ducts || [];
+    const getDir = (v) => {
+        const d = ducts.find(d => d.id == v.parentDuctId);
+        if (d && d.type === 'supply') return 'supply';
+        if (d && d.type === 'extract') return 'extract';
+        const name = (v.type || '').toLowerCase();
+        if (name.includes('tulo') || name.includes('kts') || name.includes('supply')) return 'supply';
+        return 'extract';
+    };
+    valves.forEach(v => {
+        let uniqueName = v.room || "Muu tila";
+        if (v.apartment) uniqueName = `${v.apartment} ${uniqueName}`;
+        uniqueName = uniqueName.trim();
+        if (!rooms[uniqueName]) rooms[uniqueName] = { label: uniqueName, supply: [], extract: [] };
+        const dir = getDir(v);
+        rooms[uniqueName][dir].push(v);
     });
+
+    const sortedRooms = Object.keys(rooms).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
     
-    addSignatureToPDF(doc);
+    let gSupFlow2=0, gSupTarget=0, gExtFlow2=0, gExtTarget=0;
+
+    sortedRooms.forEach(key => {
+        const r = rooms[key];
+        const rowsNeeded = Math.max(r.supply.length, r.extract.length, 1);
+
+        for (let i = 0; i < rowsNeeded; i++) {
+            const sup = r.supply[i];
+            const ext = r.extract[i];
+
+            let sHTML = `<td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td>`;
+            if (sup) {
+                const model = formatValveDisplay(sup.type); // UUSI: Käytä siistijää
+                let kVal = "-";
+                if(sup._calcK) kVal = sup._calcK.toFixed(2);
+                else {
+                    const kFunc = (typeof getK === 'function') ? getK : defaultGetK;
+                    kVal = (sup.type && sup.pos!==null) ? kFunc(sup.type, sup.pos).toFixed(2) : "-";
+                }
+                const f = parseFloat(sup.flow)||0; const t = parseFloat(sup.target)||0;
+                const pct = (t>0 && f>0) ? Math.round((f/t)*100)+"%" : "-";
+                gSupFlow2 += f; gSupTarget += t;
+                sHTML = `<td>1</td><td class="rep-left">${model}</td><td>${kVal}</td><td>${sup.measuredP||'-'}</td><td>${(sup.pos!==null)?Math.round(sup.pos):'-'}</td><td class="rep-bold">${f.toFixed(1)}</td><td>${t>0?t.toFixed(1):'-'}</td><td>${pct}</td>`;
+            }
+
+            let eHTML = `<td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td>`;
+            if (ext) {
+                const model = formatValveDisplay(ext.type); // UUSI: Käytä siistijää
+                let kVal = "-";
+                if(ext._calcK) kVal = ext._calcK.toFixed(2);
+                else {
+                    const kFunc = (typeof getK === 'function') ? getK : defaultGetK;
+                    kVal = (ext.type && ext.pos!==null) ? kFunc(ext.type, ext.pos).toFixed(2) : "-";
+                }
+                const f = parseFloat(ext.flow)||0; const t = parseFloat(ext.target)||0;
+                const pct = (t>0 && f>0) ? Math.round((f/t)*100)+"%" : "-";
+                gExtFlow2 += f; gExtTarget += t;
+                eHTML = `<td>1</td><td class="rep-left">${model}</td><td>${kVal}</td><td>${ext.measuredP||'-'}</td><td>${(ext.pos!==null)?Math.round(ext.pos):'-'}</td><td class="rep-bold">${f.toFixed(1)}</td><td>${t>0?t.toFixed(1):'-'}</td><td>${pct}</td>`;
+            }
+            html += `<tr><td class="rep-left rep-bold">${(i===0) ? r.label : ''}</td>${sHTML}${eHTML}</tr>`;
+        }
+    });
+
+    const totSupPct = gSupTarget > 0 ? Math.round((gSupFlow2/gSupTarget)*100) + " %" : "-";
+    const totExtPct = gExtTarget > 0 ? Math.round((gExtFlow2/gExtTarget)*100) + " %" : "-";
+
+    html += `<tr style="background:#f0f0f0; font-weight:bold;"><td class="rep-left">Yhteensä</td>
+             <td></td><td></td><td></td><td></td><td></td><td>${gSupFlow2.toFixed(1)}</td> <td>${gSupTarget.toFixed(1)}</td> <td>${totSupPct}</td>
+             <td></td><td></td><td></td><td></td><td></td><td>${gExtFlow2.toFixed(1)}</td> <td>${gExtTarget.toFixed(1)}</td> <td>${totExtPct}</td></tr>`;
+
+    html += `</tbody></table>
     
-    doc.save(`poytakirja_${p.name.replace(/[^a-z0-9]/gi, '_')}.pdf`);
+            <div style="margin-top:20px; font-size:12px; display:flex; gap:40px;">
+                <div><b>SFP-Luku:</b> ${sfpStr} kW/(m³/s)</div>
+                <div><b>D2-Täyttöaste:</b> ${d2Str}</div>
+                <div><b>Laakerit (Tulo):</b> ${meta.bearingSup||'-'}</div>
+                <div><b>Laakerit (Poisto):</b> ${meta.bearingExt||'-'}</div>
+            </div>
+            
+            <div style="margin-top:15px; font-size:12px;">
+                <b>Muuta huomioitavaa:</b><br>
+                <textarea style="width:100%; height:50px; border:1px solid #ccc; font-family:sans-serif; padding:5px;" onchange="updateProjectMeta('remarks',this.value)">${p.meta.remarks || ''}</textarea>
+            </div>
+    
+            <div style="margin-top:30px; display:flex; gap:20px; align-items:flex-end;">
+                <div style="flex:1;">
+                    <div style="font-size:12px; margin-bottom:5px;">Allekirjoitus:</div>
+                    <div class="signature-wrapper" style="border:1px solid #ccc; background:#fff;"><canvas id="signaturePadReportView"></canvas></div>
+                    <button class="btn btn-secondary btn-sm" onclick="clearSignatureReport('signaturePadReportView')" style="margin-top:5px;">Tyhjennä</button>
+                </div>
+                <div>
+                    <button class="btn btn-primary" onclick="printReportExcelStyle()" style="padding:10px 20px; font-size:16px;">🖨️ Lataa PDF</button>
+                </div>
+            </div>
+    </div>`;
+
+    container.innerHTML = html;
+    showView('view-report');
+    setTimeout(() => {
+        const c = document.getElementById('signaturePadReportView');
+        if(c) {
+            const ctx = c.getContext('2d');
+            c.width = c.parentElement.clientWidth; c.height = 120;
+            ctx.lineWidth=2; ctx.lineJoin='round'; ctx.lineCap='round'; ctx.strokeStyle='#000';
+            let drawing=false;
+            const getPos=(e)=>{const r=c.getBoundingClientRect(); return {x:(e.touches?e.touches[0].clientX:e.clientX)-r.left, y:(e.touches?e.touches[0].clientY:e.clientY)-r.top}};
+            c.onmousedown=(e)=>{drawing=true; ctx.beginPath(); const p=getPos(e); ctx.moveTo(p.x,p.y); e.preventDefault();};
+            c.onmousemove=(e)=>{if(!drawing)return; const p=getPos(e); ctx.lineTo(p.x,p.y); ctx.stroke(); e.preventDefault();};
+            window.addEventListener('mouseup', ()=>{drawing=false;});
+            c.ontouchstart=(e)=>{drawing=true; ctx.beginPath(); const p=getPos(e); ctx.moveTo(p.x,p.y); e.preventDefault();};
+            c.ontouchmove=(e)=>{if(!drawing)return; const p=getPos(e); ctx.lineTo(p.x,p.y); ctx.stroke(); e.preventDefault();};
+        }
+    }, 200);
 }
 
 // Apufunktio allekirjoituksen lisäämiseen PDF:ään
@@ -4377,7 +4965,7 @@ function showReportSupplyExtract(){
     html += `<div style="margin-top:12px; display:flex; gap:10px; align-items:center;">
                 <span style="font-size:12px; color:#666;">Allekirjoitus:</span>
                 <div class="signature-wrapper"><canvas id="signaturePadReport1"></canvas><button class="clear-sig-btn" onclick="clearSignatureReport('signaturePadReport1')">Tyhjennä</button></div>
-                <button class="btn btn-primary" onclick="printReportAHU()">Tulosta PDF</button>
+               <button class="btn btn-primary" onclick="printReportExcelStyle()">Tulosta PDF</button>
             </div>`;
     container.innerHTML = html;
     showView('view-report');
@@ -4398,7 +4986,7 @@ function showReportRoof(){
     html += `<div style="margin-top:12px; display:flex; gap:10px; align-items:center;">
                 <span style="font-size:12px; color:#666;">Allekirjoitus:</span>
                 <div class="signature-wrapper"><canvas id="signaturePadReport2"></canvas><button class="clear-sig-btn" onclick="clearSignatureReport('signaturePadReport2')">Tyhjennä</button></div>
-                <button class="btn btn-primary" onclick="printReportRoof()">Tulosta PDF</button>
+              <button class="btn btn-primary" onclick="printReportExcelStyle()">Tulosta PDF</button>
             </div>`;
     container.innerHTML = html;
     showView('view-report');
