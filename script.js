@@ -40,12 +40,69 @@ if (!p.modes) { p.modes = { home: { machines: JSON.parse(JSON.stringify(p.machin
 
 });
 
-// Yleinen ID-generaattori
-function genId(){
-    return Math.floor(Date.now() + Math.random()*100000);
+/* ================================
+   KÄYTTÄJÄTILA (PRO / BASIC)
+   ================================ */
+
+// Sallittuja arvoja: 'pro' | 'basic'
+
+
+function isPro() {
+    return true;
 }
-// --- APUFUNKTIO: Laske asento K-arvon perusteella (Interpolointi) ---
-// --- APUFUNKTIO: Laske asento K-arvon perusteella (Kokonaisluvut) ---
+/**
+ * Palauttaa true jos venttiiliä saa muokata (avaa modal).
+ * Keskitetty työvaihe- ja turvallisuuslogiikka.
+ */
+function canEditValve(v, analysisResult) {
+
+    // Perusvaatimus: pro-tila
+    if (!isPro()) return false;
+
+    // Ei analyysiä → ei muokkausta
+    if (!analysisResult) return false;
+
+    // Väärä työvaihe
+    if (window.currentPhase !== 'ADJUST_VALVES') return false;
+
+    // Etsi tämän venttiilin analyysitulos
+    const res = analysisResult.valves?.find(r => String(r.id) === String(v.id));
+    if (!res) return false;
+
+    // Indeksiä ei saa säätää
+    if (res.isIndex === true) return false;
+
+    // Sallitaan vain jos on oikea säätöohje
+    if (res.code === 'ADJUST_OPEN' || res.code === 'ADJUST_CHOKE') {
+        return true;
+    }
+
+    // Kaikki muut tapaukset estetään
+    return false;
+}
+
+/* ================================
+   K-ARVON TILA
+   ================================ */
+
+function getKStatus(v) {
+    if (v && v.kApproved !== null && v.kApproved !== undefined) {
+        return 'approved';
+    }
+    if (v && v.kWorking !== null && v.kWorking !== undefined) {
+        return 'working';
+    }
+    return 'none';
+}
+
+/* ================================
+   YKSINKERTAINEN ID-GENERAATTORI
+   ================================ */
+
+function genId() {
+    return Math.floor(Date.now() + Math.random() * 100000);
+}
+
 function getKStatus(v) {
     if (v.kApproved !== null && v.kApproved !== undefined) return 'approved';
     if (v.kWorking !== null && v.kWorking !== undefined) return 'working';
@@ -283,37 +340,25 @@ function getKStatus(v) {
     if (v.kWorking) return 'working';
     return 'none';
 }
+/**
+ * Keskitetty tarkistus:
+ * Saako venttiiliä säätää / avata modalin tässä tilanteessa.
+ */
 function canEditValve(v, analysis) {
-    // Turva
-    if (!v || !analysis) return false;
+    if (!isPro()) return false;
+    if (!analysis) return false;
 
-    // 1️⃣ Työvaihe: vain venttiilien säätövaiheessa
-    if (analysis.phase !== 'ADJUST_VALVES') {
-        return false;
-    }
+    // Vain venttiilien säätövaiheessa
+    if (window.currentPhase !== 'ADJUST_VALVES') return false;
 
-    // 2️⃣ Indeksiventtiiliä ei saa säätää
-    if (analysis.indexValve &&
-        String(v.id) === String(analysis.indexValve.id)) {
-        return false;
-    }
-
-    // 3️⃣ Etsi venttiilin analyysirivi
-    const res = analysis.valves.find(r => String(r.id) === String(v.id));
+    const res = analysis.valves?.find(r => String(r.id) === String(v.id));
     if (!res) return false;
 
-    // 4️⃣ Vain nämä koodit ovat säädettäviä
-    const allowedCodes = [
-        'ADJUST_OPEN',
-        'ADJUST_CHOKE'
-    ];
-
-    if (!allowedCodes.includes(res.code)) {
-        return false;
-    }
-
-    // 5️⃣ Kaikki ehdot täyttyvät
-    return true;
+    // Vain oikeat toimenpiteet
+    return (
+        res.code === 'ADJUST_OPEN' ||
+        res.code === 'ADJUST_CHOKE'
+    );
 }
 
 function formatValveDisplay(type) {
@@ -2796,13 +2841,12 @@ function renderHorizontalMap(container) {
     const currentMode = window.currentMode || 'home';
     const modeObj = p.modes?.[currentMode] || {};
     const activeValves = modeObj.valves || [];
-    const machine = modeObj.machines?.[0] || null;
 
     const supplies = (p.ducts || []).filter(d => d.type === 'supply');
     const extracts = (p.ducts || []).filter(d => d.type === 'extract');
 
     /* =====================================================
-       RENDER DUCT – venttiilikortit
+       RENDER DUCT (venttiilikortit)
        ===================================================== */
     const renderDuct = (d, color) => {
 
@@ -2823,9 +2867,10 @@ function renderHorizontalMap(container) {
                 <div class="vis-valves-wrap">
                     ${valves.map(v => {
 
-                        const res = analysis?.valves.find(r => String(r.id) === String(v.id));
-                        const code = res?.code || 'OK';
-                        const isIndex = res?.isIndex === true;
+                        const idx = p.valves.indexOf(v);
+                        const res = analysis?.valves?.find(r => String(r.id) === String(v.id)) || {};
+                        const code = res.code || 'OK';
+                        const isIndex = res.isIndex === true;
 
                         const canClick =
                             window.currentPhase === 'ADJUST_VALVES' &&
@@ -2837,9 +2882,19 @@ function renderHorizontalMap(container) {
 
                         return `
                             <div class="${cardClass}"
-                                 ${canClick ? `onclick="openValvePanel(${p.valves.indexOf(v)})"` : ''}>
+                                 ${canClick ? `onclick="openValvePanel(${idx})"` : ''}>
 
-                                <!-- K-BADGE -->
+                                <!-- 🔒 Lukitse indeksiksi -->
+                                <div class="lock-btn"
+                                     onclick="event.stopPropagation(); toggleIndexLock(${v.id}, '${d.type}')"
+                                     title="Lukitse indeksiksi">
+                                    🔒
+                                </div>
+
+                                <!-- 👑 Indeksi -->
+                                ${isIndex ? `<div class="idx-icon">👑</div>` : ''}
+
+                                <!-- K-badge -->
                                 ${(() => {
                                     const ks = getKStatus(v);
                                     if (ks === 'approved') return `<div class="k-badge approved">Hyväksytty K</div>`;
@@ -2847,23 +2902,16 @@ function renderHorizontalMap(container) {
                                     return `<div class="k-badge none">Ei K-arvoa</div>`;
                                 })()}
 
-                                <!-- LUKKO -->
-                                <div class="lock-btn"
-                                     onclick="event.stopPropagation(); toggleIndexLock(${v.id}, '${d.type}')">
-                                     🔒
-                                </div>
-
-                                <!-- INDEKSI -->
-                                ${isIndex ? `<div class="idx-icon">👑</div>` : ''}
-
                                 <div class="vc-room">${v.room || '-'}</div>
-                                <div class="vc-val">${(v.flow || 0).toFixed(1)} l/s</div>
+
+                                <div class="vc-val">${(Number(v.flow) || 0).toFixed(1)} l/s</div>
                                 <div class="vc-pos">Av: ${v.pos ?? '-'}</div>
                                 <div class="vc-pa">${v.measuredP ?? '-'} Pa</div>
 
-                                ${res?.instruction
+                                ${res.instruction
                                     ? `<div class="vc-advice">${res.instruction}</div>`
                                     : ''}
+
                             </div>
                         `;
                     }).join('')}
@@ -2873,8 +2921,10 @@ function renderHorizontalMap(container) {
     };
 
     /* =====================================================
-       LAYOUT
+       KONEKORTTI
        ===================================================== */
+    const machine = modeObj.machines?.[0] || null;
+
     const html = `
         <div style="display:flex; gap:16px; align-items:flex-start;">
 
@@ -2896,24 +2946,17 @@ function renderHorizontalMap(container) {
                     </div>
 
                     <div style="font-size:12px; margin-top:6px;">
-                        Ilmavirta: ${machine?.flow ?? '-'}
+                        Ilmavirta: ${machine?.flow ?? '-'} l/s
                     </div>
 
                     <div style="font-size:10px; color:#888; margin-top:6px;">
                         Tila: ${currentMode}
                     </div>
 
-                    <!-- 📄 RAPORTTINAPIT -->
+                    <!-- Raporttinapit -->
                     <div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap;">
-                        <button class="btn btn-secondary"
-                                onclick="downloadReportText()">
-                            📝 Lataa raportti (TXT)
-                        </button>
-
-                        <button class="btn btn-secondary"
-                                onclick="downloadReportJSON()">
-                            📄 Lataa raportti (JSON)
-                        </button>
+                        <button class="btn btn-secondary" onclick="downloadReportText()">📝 Lataa raportti (TXT)</button>
+                        <button class="btn btn-secondary" onclick="downloadReportJSON()">📄 Lataa raportti (JSON)</button>
                     </div>
                 </div>
             </div>
@@ -2929,7 +2972,6 @@ function renderHorizontalMap(container) {
 
     container.innerHTML = html;
 }
-
 
 // --- TOIMINTO: Siirrä venttiiliä sivusuunnassa ---
 function moveValve(valveId, delta) {
@@ -3744,38 +3786,36 @@ function createBranchHTML(p, duct, colorName){
                     if (!p || idx < 0 || idx >= p.valves.length) return;
                 
                     const v = p.valves[idx];
-                    const overlayId = 'valve-modal-overlay';
+                    const currentMode = window.currentMode || 'home';
                 
+                    // Selvitä analyysi tästä rungosta
+                    const ductId = v.parentDuctId;
+                    const sameDuctValves = p.modes[currentMode]?.valves
+                        ?.filter(x => x.parentDuctId === ductId) || [];
+                
+                    const analysis =
+                        typeof analyzeTrunkRelative === 'function'
+                            ? analyzeTrunkRelative(sameDuctValves)
+                            : null;
+                
+                    // ❌ ESTO: ei saa avata modalia
+                    if (!canEditValve(v, analysis)) {
+                        console.warn('Venttiilin säätö estetty (väärä vaihe tai tila)');
+                        return;
+                    }
+                
+                    /* ================================
+                       MODALIN AVAUS (ENNALLAAN)
+                       ================================ */
+                    const overlayId = 'valve-modal-overlay';
                     let ov = document.getElementById(overlayId);
+                
                     if (!ov) {
                         ov = document.createElement('div');
                         ov.id = overlayId;
                         ov.className = 'modal-overlay';
                         document.body.appendChild(ov);
                     }
-                
-                    // Malli / koko -valinnat
-                    const type = v.type || '';
-                    const modelName = valveIdToModelId[type] || '';
-                
-                    const models = Object.keys(valveGroups).sort();
-                    const modelOptions = [
-                        '<option value="">-- Valitse malli --</option>',
-                        ...models.map(m =>
-                            `<option value="${m}" ${m === modelName ? 'selected' : ''}>${m}</option>`
-                        )
-                    ].join('');
-                
-                    const sizes = modelName && valveGroups[modelName]
-                        ? valveGroups[modelName].sort((a, b) => a.sortSize - b.sortSize)
-                        : [];
-                
-                    const sizeOptions = [
-                        '<option value="">-- Koko --</option>',
-                        ...sizes.map(s =>
-                            `<option value="${s.id}" ${s.id === type ? 'selected' : ''}>${s.size}</option>`
-                        )
-                    ].join('');
                 
                     ov.innerHTML = `
                         <div class="modal">
@@ -3785,65 +3825,41 @@ function createBranchHTML(p, duct, colorName){
                                 <div class="valve-edit-row">
                 
                                     <label>Huone
-                                        <input id="valve-room-${idx}"
-                                               type="text"
+                                        <input id="valve-room-${idx}" type="text"
                                                value="${v.room || ''}"
                                                class="input input-text input-sm w-140">
                                     </label>
                 
-                                    <label>Malli
-                                        <select id="valve-model-${idx}"
-                                                class="input input-sm w-160"
-                                                onchange="updateValveModalSizes(${idx})">
-                                            ${modelOptions}
-                                        </select>
-                                    </label>
-                
-                                    <label>Koko
-                                        <select id="valve-size-${idx}"
-                                                class="input input-sm w-120">
-                                            ${sizeOptions}
-                                        </select>
-                                    </label>
-                
                                     <label>Virtaus (l/s)
-                                        <input id="valve-flow-${idx}"
-                                               type="number"
-                                               min="0"
+                                        <input id="valve-flow-${idx}" type="number"
                                                step="0.1"
-                                               value="${(parseFloat(v.flow) || 0).toFixed(1)}"
+                                               value="${v.flow ?? ''}"
                                                class="input input-number input-sm w-110">
                                     </label>
                 
                                     <label>Tavoite (l/s)
-                                        <input id="valve-target-${idx}"
-                                               type="number"
-                                               min="0"
+                                        <input id="valve-target-${idx}" type="number"
                                                step="0.1"
                                                value="${v.target ?? ''}"
                                                class="input input-number input-sm w-110">
                                     </label>
                 
                                     <label>Paine (Pa)
-                                        <input id="valve-pa-${idx}"
-                                               type="number"
+                                        <input id="valve-pa-${idx}" type="number"
                                                step="0.1"
                                                value="${v.measuredP ?? ''}"
                                                class="input input-number input-sm w-100">
                                     </label>
                 
                                     <label>Avaus
-                                        <input id="valve-pos-${idx}"
-                                               type="number"
+                                        <input id="valve-pos-${idx}" type="number"
                                                step="1"
-                                               value="${v.pos !== undefined && v.pos !== null ? Math.round(v.pos) : ''}"
+                                               value="${v.pos ?? ''}"
                                                class="input input-number input-sm w-80">
                                     </label>
                 
-                                    <!-- 🔑 WORKING K -->
                                     <label>K-arvo (working)
-                                        <input id="valve-k-${idx}"
-                                               type="number"
+                                        <input id="valve-k-${idx}" type="number"
                                                step="0.01"
                                                value="${v.kWorking ?? ''}"
                                                class="input input-number input-sm w-110">
@@ -3866,10 +3882,6 @@ function createBranchHTML(p, duct, colorName){
                     `;
                 
                     ov.style.display = 'flex';
-                
-                    // Merkkaa että suhteellinen säätö on aktiivinen
-                    p.meta = p.meta || {};
-                    p.meta.relativeAdjustActive = true;
                 }
                 
                 
