@@ -1031,6 +1031,45 @@ table.report th { background: #f0f0f0; }
         color: #666;
         border: 1px solid #ccc;
     }
- 
+    .lock-tooltip {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        cursor: help;
+    }
+    
+    .lock-tooltip .lock-text {
+        font-size: 10px;
+        color: #b00020;
+        white-space: nowrap;
+    }
+    
+    .lock-tooltip .lock-bubble {
+        position: absolute;
+        bottom: 125%;
+        left: 0;
+        background: #222;
+        color: #fff;
+        padding: 6px 8px;
+        border-radius: 6px;
+        font-size: 11px;
+        line-height: 1.3;
+        white-space: nowrap;
+        opacity: 0;
+        pointer-events: none;
+        transform: translateY(4px);
+        transition: opacity 0.15s ease, transform 0.15s ease;
+        z-index: 9999;
+    }
+    
+    .lock-tooltip:hover .lock-bubble {
+        opacity: 1;
+        transform: translateY(0);
+    }
+    .valve-card.locked {
+        opacity: 0.7;
+    }
+    
       
     /* ROOM PANEL END */
