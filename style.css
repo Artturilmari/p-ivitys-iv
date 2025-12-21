@@ -1070,6 +1070,15 @@ table.report th { background: #f0f0f0; }
     .valve-card.locked {
         opacity: 0.7;
     }
+    .pct-ok { background:#e8f5e9; }
+    .pct-warn { background:#fff8e1; }
+    .pct-bad { background:#fdecea; }
+    
+    @media print {
+        .pct-ok, .pct-warn, .pct-bad {
+            background:none !important;
+        }
+    }
     
       
     /* ROOM PANEL END */
