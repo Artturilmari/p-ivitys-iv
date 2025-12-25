@@ -49,10 +49,9 @@
                font-weight:bold;font-size:13px;">
    </div>
             <div id="project-actions" style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;">
-<button class="btn btn-secondary" onclick="showAddValve('extract')">
-    + Lisää poistoventtiili
-</button>                <button class="btn btn-primary" onclick="showVisual()" style="width:auto; padding:8px 12px;">📊 Näytä kaavio</button>
-                <button class="btn btn-secondary" onclick="showRelativeAdjustPanel()" style="width:auto; padding:8px 12px; background-color: #e65100; color: white;">⚖️ Suhteellinen säätö</button>
+                <button class="btn btn-success" onclick="showAddValve()" style="width:auto; padding:8px 12px;">+ Mittaus</button>
+                <button class="btn btn-primary" onclick="showVisual()" style="width:auto; padding:8px 12px;">📊 Näytä kaavio</button>
+                <button class="btn btn-secondary" onclick="showRelativeAdjustShortcut()" style="width:auto; padding:8px 12px; background-color: #e65100; color: white;">⚖️ Suhteellinen säätö</button>
                 <button class="btn btn-secondary" onclick="showBalance()" style="width:auto; padding:8px 12px;">⚖️ Tasapaino</button>
                 <button class="btn btn-secondary" onclick="optimizeEnergy()" style="width:auto; padding:8px 12px;">⚡ Optimoi</button>
                 <button class="btn btn-secondary" onclick="showReportSupplyExtract()" style="width:auto; padding:8px 12px;">📄 Näytä pöytäkirja: Tulo/Poisto</button>
@@ -97,9 +96,7 @@
 </div>
 
 <div style="margin-top:8px;">
-<button class="btn btn-primary" onclick="showAddValve('supply')">
-    + Lisää tuloventtiili
-</button>
+    <button class="btn btn-primary" onclick="showAddValve(false)">+ Lisää venttiili / Mittaus</button>
 </div>
 
             <button class="btn btn-secondary" style="margin-top:5px;" onclick="showPressureMeasure()">📏 Mittaa paine-ero (Pa)</button>
@@ -228,18 +225,7 @@
             
             <label>Manuaalinen K-arvo (valinnainen)</label>
             <input type="number" id="manualK" step="0.1" placeholder="">
-            <button class="btn btn-secondary"
-        style="margin-top:6px;"
-        onclick="openKLibraryPicker()">
-    🔍 Hae K-kirjastosta
-</button>
-
-            <button class="btn btn-secondary"
-        onclick="saveCurrentKToLibrary()"
-        style="margin-top:6px;">
-    💾 Tallenna K-kirjastoon
-</button>
-
+            
             <label>Kuva (valinnainen)</label>
             <input type="file" id="valvePhotoInput" accept="image/*" onchange="previewPhoto()">
             <img id="valvePhotoPreview" class="photo-preview">
@@ -282,57 +268,32 @@
             </div>
             <div class="modal-actions">
                 <button class="btn btn-primary" onclick="confirmAddApartments()">Luo</button>
-<button class="btn btn-cancel" onclick="closeAddApartmentModal()">Peruuta</button>
+                <button class="btn" onclick="closeAddApartmentModal()">Peruuta</button>
             </div>
         </div>
     </div>
 
-<!-- ADD DUCT VIEW -->
-<div class="view" id="view-add-duct" style="display:none;">
-    <button class="btn btn-secondary" onclick="showView('view-details')">Peruuta</button>
-
-    <div style="padding: 15px;">
-        <h3>Runko</h3>
-
-        <label>Tyyppi</label>
-        <select id="ductType">
-            <option value="supply">Tulo</option>
-            <option value="extract">Poisto</option>
-        </select>
-
-        <label>Nimi</label>
-        <input type="text" id="ductName" placeholder="esim. Päärunko">
-
-        <label>Koko (mm)</label>
-<label>Koko (mm)</label>
-<select id="ductSize">
-    <option value="">Valitse koko</option>
-    <option>80</option>
-    <option>100</option>
-    <option>125</option>
-    <option>160</option>
-    <option>200</option>
-    <option>250</option>
-    <option>315</option>
-    <option>400</option>
-    <option>500</option>
-    <option>630</option>
-    <option>800</option>
-    <option>900</option>
-    <option>1000</option>
-    <option>1250</option>
-</select>
-
-        <label>Kanavisto</label>
-        <select id="ductGroup">
-            <option value="ahu">IV-Kone (Tulo/Poisto)</option>
-            <option value="roof">Huippuimuri (Poisto)</option>
-        </select>
-
-        <button class="btn btn-primary" onclick="saveDuct()">Tallenna</button>
+    <!-- ADD DUCT VIEW -->
+    <div class="view" id="view-add-duct">
+        <div style="padding: 15px;">
+            <h3>Runko</h3>
+            <label>Tyyppi</label>
+            <select id="ductType">
+                <option value="supply">Tulo</option>
+                <option value="extract">Poisto</option>
+            </select>
+            <label>Nimi</label>
+            <input type="text" id="ductName" placeholder="esim. Päärunko">
+            <label>Koko (mm)</label>
+            <input type="number" id="ductSize" value="125">
+            <label>Kanavisto</label>
+            <select id="ductGroup">
+                <option value="ahu">IV-Kone (Tulo/Poisto)</option>
+                <option value="roof">Huippuimuri (Poisto)</option>
+            </select>
+            <button class="btn btn-primary" onclick="saveDuct()">Tallenna</button>
+        </div>
     </div>
-</div>
-
 
     <!-- SETTINGS VIEW -->
     <div class="view" id="view-settings">
@@ -374,7 +335,7 @@
         <div style="padding: 15px;">
             <h3>⚡ Optimointiraportti</h3>
             <div id="optSteps" style="background: #f9f9f9; padding: 15px; border-radius: 8px;"></div>
-<button class="btn btn-cancel" onclick="showView('view-details')" style="margin-top: 15px;">Takaisin</button>
+            <button class="btn btn-secondary" onclick="showView('view-details')" style="margin-top: 15px;">Takaisin</button>
         </div>
     </div>
 
@@ -383,7 +344,7 @@
         <div style="padding: 15px;">
             <h3>⚖️ Ilmanvaihdon tasapaino</h3>
             <div id="balanceContent"></div>
-<button class="btn btn-cancel" onclick="showView('view-details')" style="margin-top: 15px;">Takaisin</button>
+            <button class="btn btn-secondary" onclick="showView('view-details')" style="margin-top: 15px;">Takaisin</button>
         </div>
     </div>
 
@@ -498,7 +459,7 @@
             <div class="chk-row"><input type="checkbox" id="chkCustom"> <label>Lisää tämä huone joka asuntoon</label></div>
             <div style="display:flex; gap:10px; margin-top:20px;">
                 <button class="btn btn-success" onclick="runGenerator()">Luo asunnot</button>
-<button class="btn btn-cancel" onclick="closeGenerator()">Peruuta</button>
+                <button class="btn btn-secondary" onclick="closeGenerator()">Peruuta</button>
             </div>
         </div>
     </div>
@@ -520,22 +481,6 @@
             </div>
         </div>
     </div>
-    <div id="kLibraryModal" class="modal-overlay" style="display:none;">
-    <div class="modal" style="max-width:600px;">
-        <div class="modal-header">
-            📚 Oma K-kirjasto
-        </div>
-
-        <div class="modal-content" id="kLibraryContent">
-            <!-- täytetään JS:llä -->
-        </div>
-
-        <div class="modal-actions">
-<button class="btn btn-cancel" onclick="closeKLibraryModal()">Sulje</button>
-        </div>
-    </div>
-</div>
-
 
     <!-- Poistettu duplikaatti Asunto-modal (aptModal) -->
     <script src="./script.js"></script>
