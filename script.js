@@ -44,6 +44,9 @@ if (!p.meta) p.meta = {};
 if (!p.modes) { p.modes = { home: { machines: JSON.parse(JSON.stringify(p.machines)), valves: JSON.parse(JSON.stringify(p.valves)) }, away: { machines: [], valves: [] }, boost: { machines: [], valves: [] } }; }
 
 });
+window.uiState = window.uiState || {};
+window.uiState.activeKLibraryType = null;
+
 // ===============================
 // K-KIRJASTO: sulje taustaa klikkaamalla
 // ===============================
@@ -227,47 +230,133 @@ function migrateUserKLibraryIfNeeded() {
 }
 
 function saveCurrentKToLibrary() {
-    // varmista että kirjasto on ladattu
     if (!window.userKLibrary) {
         loadUserKLibrary();
     }
 
-    // päätellään luokka venttiilityypistä
     const valveType = document.getElementById('valveType')?.value;
     const type =
         valveType === 'supply' ? 'supply' :
         valveType === 'extract' ? 'extract' :
         'other';
 
-    // 🔴 OIKEA K-KENTTÄ ON manualK
     const k = Number(document.getElementById('manualK')?.value);
     const opening = Number(document.getElementById('valveSizeSelect')?.value);
-    const note = String(
-        document.getElementById('valveModelSelect')?.selectedOptions?.[0]?.textContent || ''
+
+    const modelText = String(
+        document.getElementById('valveModelSelect')
+            ?.selectedOptions?.[0]?.textContent || ''
     ).trim();
+
+    const model = modelText || '—';
+    const size = opening;
 
     if (!opening || opening <= 0) {
         alert('Valitse venttiilin koko');
         return;
     }
-
     if (!k || k <= 0) {
         alert('Anna manuaalinen K-arvo');
         return;
     }
 
-    const ok = saveToUserKLibrary({
-        type,
-        opening,
-        k,
-        note
+    if (!Array.isArray(window.userKLibrary[type])) {
+        window.userKLibrary[type] = [];
+    }
+
+    const normModel = model.toUpperCase();
+    let updated = false;
+
+    window.userKLibrary[type] = window.userKLibrary[type].map(r => {
+        const rNormModel = String(r.model || '').trim().toUpperCase();
+        if (
+            rNormModel === normModel &&
+            Number(r.size) === Number(size) &&
+            Number(r.opening) === Number(opening)
+        ) {
+            updated = true;
+            return { ...r, k, note: model };
+        }
+        return r;
     });
 
-    if (ok) {
-        alert('Tallennettu K-kirjastoon');
-    } else {
-        alert('Tallennus epäonnistui');
+    if (!updated) {
+        window.userKLibrary[type].push({
+            model,
+            size,
+            opening,
+            k,
+            note: model
+        });
     }
+
+    saveData?.();
+
+    // 🔁 TÄRKEIN KOHTA
+    const activeType = window.uiState.activeKLibraryType || type;
+    if (typeof renderKCategoryGroupedList === 'function') {
+        renderKCategoryGroupedList(activeType);
+    }
+
+    alert(updated
+        ? 'K-arvo päivitetty'
+        : 'K-arvo lisätty'
+    );
+    refreshOpenKValveModal(type, model, size);
+
+}
+
+function deleteKEntry(type, idx) {
+    ensureUserKLibraryReady();
+    if (!window.userKLibrary[type]?.[idx]) return;
+
+    if (!confirm('Poistetaanko tämä K-arvo?')) return;
+
+    window.userKLibrary[type].splice(idx, 1);
+    saveData?.();
+
+    const activeType = window.uiState.activeKLibraryType || type;
+    closeKValveDetailModal();
+    renderKCategoryGroupedList(activeType);
+    refreshOpenKValveModal(type, r.model, r.size);
+
+}
+
+
+function applyKFromLibraryToActiveValve(opening, k) {
+    // 1️⃣ Yritä mittaus-/venttiilimodaalin kenttiä
+    const posEl =
+        document.getElementById('currentPos') ||   // mittausnäkymä
+        document.getElementById('valve-pos');      // edit valve -modal
+
+    const kEl =
+        document.getElementById('manualK') ||      // mittausnäkymä
+        document.getElementById('valve-k');         // edit valve -modal
+
+    if (!posEl || !kEl) {
+        alert('Aktiivista venttiiliä ei löytynyt.');
+        return;
+    }
+
+    posEl.value = Number(opening).toFixed(1);
+    kEl.value   = Number(k).toFixed(2);
+
+    // 2️⃣ Päivitä live-esikatselut jos olemassa
+    if (typeof updateLiveK === 'function') {
+        updateLiveK();
+    }
+    if (typeof updateCalculatedFlowPreview === 'function') {
+        updateCalculatedFlowPreview();
+    }
+
+    // 3️⃣ Visuaalinen palaute
+    try {
+        posEl.dispatchEvent(new Event('input', { bubbles: true }));
+        kEl.dispatchEvent(new Event('input', { bubbles: true }));
+    } catch(e) {}
+
+    // 4️⃣ Sulje vain venttiilimodaali (ei koko K-kirjastoa)
+    closeKValveDetailModal();
 }
 
 
@@ -326,6 +415,48 @@ function openUserKLibraryForValve() {
     if (!list[idx]) return;
 
     document.getElementById('valveK').value = list[idx].k;
+}
+function getActiveValvesForMap(project) {
+    if (!project) return [];
+
+    const mode = project.currentMode || project.activeMode;
+    if (project.modes && mode && project.modes[mode]?.valves) {
+        return project.modes[mode].valves;
+    }
+
+    // Fallback vanhoille projekteille
+    if (Array.isArray(project.valves)) {
+        return project.valves;
+    }
+
+    return [];
+}
+
+// ✅ Yksi totuus: varmista että mode-valves on aina olemassa ja käytettävä
+function ensureModeValves(p, mode) {
+    if (!p) return [];
+    if (!mode) mode = 'home';
+
+    if (!p.modes) p.modes = {};
+    if (!p.modes[mode]) p.modes[mode] = {};
+
+    if (!Array.isArray(p.modes[mode].valves)) {
+        // Fallback vanhoille projekteille: käytä p.valves ja linkitä se modeen
+        p.modes[mode].valves = Array.isArray(p.valves) ? p.valves : [];
+    }
+
+    return p.modes[mode].valves;
+}
+
+// ✅ Kartta käyttää aina tätä (mode -> fallback p.valves)
+function getActiveValvesForMap(p) {
+    const mode = window.currentMode || 'home';
+    return ensureModeValves(p, mode);
+}
+
+// ✅ JS-stringin turvallinen upotus onclick-attribuuttiin
+function escapeJsString(s) {
+    return String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
 // Varmista että kirjasto on ladattu
@@ -1201,6 +1332,47 @@ function openAddKModal() {
     ov.style.display = 'flex';
     if (typeof applyButtonStyles === 'function') applyButtonStyles(ov);
 }
+function openAddKForValve(type, model, size) {
+    // Täytetään kentät valmiiksi
+    document.getElementById('valveType').value = type;
+
+    // Valitse malli jos löytyy
+    const modelSelect = document.getElementById('valveModelSelect');
+    if (modelSelect) {
+        [...modelSelect.options].forEach(opt => {
+            if (opt.textContent.trim().toUpperCase() === model.toUpperCase()) {
+                modelSelect.value = opt.value;
+            }
+        });
+    }
+
+    // Koko / avaus
+    const sizeEl = document.getElementById('valveSizeSelect');
+    if (sizeEl) {
+        sizeEl.value = size;
+    }
+
+    // Tyhjennä K
+    const kEl = document.getElementById('manualK');
+    if (kEl) kEl.value = '';
+
+    // Sulje venttiilimodaali, avaa lisäys
+    closeKValveDetailModal();
+
+    // Avaa normaali K-lisäysmodaali
+    openAddKModal(type);
+}
+function refreshOpenKValveModal(type, model, size) {
+    const ov = document.getElementById('k-valve-overlay');
+    if (ov && ov.style.display === 'flex') {
+        openValveById(buildValveId({ type, model, size }));
+    }
+
+    if (window.uiState?.activeKLibraryType) {
+        renderKCategoryGroupedList(window.uiState.activeKLibraryType);
+    }
+}
+
 
 function closeAddKModal() {
     const ov = document.getElementById('add-k-overlay');
@@ -3310,18 +3482,43 @@ function deleteValveByIndex(idx){
     }
 }
 
-
 function openValveById(valveId) {
+    if (valveId == null) return;
+
+    const idStr = String(valveId);
+
+    // 1) K-KIRJASTO: "type::model::size"
+    if (idStr.includes('::')) {
+        ensureUserKLibraryReady?.();
+
+        const [type, model, size] = idStr.split('::');
+        if (!type || !model || !size) {
+            console.warn('openValveById: puutteellinen K-kirjasto-ID', valveId);
+            return;
+        }
+
+        openKValveDetailModal(type, model, Number(size));
+        return;
+    }
+
+    // 2) PROJEKTIN VENTTIILI: v.id
     const p = projects.find(x => x.id === activeProjectId);
     if (!p) return;
 
     const mode = window.currentMode || 'home';
-    const valves = p.modes?.[mode]?.valves || [];
-    const idx = valves.findIndex(v => v.id === valveId);
 
-    if (idx >= 0) openValvePanel(idx);
+    // varmista että openValvePanel näkee saman listan
+    const valves = ensureModeValves(p, mode);
+
+    const idx = valves.findIndex(v => String(v?.id) === idStr);
+    if (idx < 0) {
+        console.warn('openValveById: venttiiliä ei löydy id:llä', valveId);
+        return;
+    }
+
+    // avaa normaali venttiilimodaali
+    openValvePanel(idx);
 }
-
 
 
 function createDemoHybrid(){
@@ -5350,6 +5547,8 @@ function saveData() {
 }
 
 function renderVisualContent() {
+    console.log('🔥 renderVisualContent CALLED, mode=', window.activeVisMode);
+
     console.log('renderVisualContent called');
 
     // Etsitään piirtoalue (tuki V62 ja V80 ID:lle)
@@ -5405,7 +5604,10 @@ function renderVisualContent() {
 function renderVerticalStackInto(container, p) {
 
     const ducts = p.ducts || [];
-    const valves = p.valves || [];
+
+    // ✅ Kohta 1: myös pystynäkymä käyttää samaa “aktiivista” venttiililähdettä
+    const valves = getActiveValvesForMap(p);
+
     const currentMode = window.currentMode || 'home';
 
     const isApt = (p.systemType === 'kerrostalo');
@@ -5489,7 +5691,7 @@ function renderVerticalStackInto(container, p) {
         floorsContainer.className = 'vis-floors-container';
 
         // Ryhmittele venttiilit asunnoittain
-        const shaftValves = valves.filter(v => v.parentDuctId === shaft.id);
+        const shaftValves = valves.filter(v => String(v.parentDuctId) === String(shaft.id));
         const aptGroups = {};
 
         shaftValves.forEach(v => {
@@ -5520,17 +5722,15 @@ function renderVerticalStackInto(container, p) {
                     ? Math.abs(data.flow - data.target) / data.target
                     : null;
 
-            let status = 'none';
             let bg = '#f1f1f1';
-
             if (diff !== null) {
-                if (diff < 0.10) { status = 'ok'; bg = '#d6f5d6'; }
-                else if (diff < 0.15) { status = 'warn'; bg = '#fff3cd'; }
-                else { status = 'err'; bg = '#fde2e1'; }
+                if (diff < 0.10) bg = '#d6f5d6';
+                else if (diff < 0.15) bg = '#fff3cd';
+                else bg = '#fde2e1';
             }
 
             const avgPos = data.avgPos.length
-                ? Math.round(data.avgPos.reduce((a,b)=>a+b,0) / data.avgPos.length)
+                ? Math.round(data.avgPos.reduce((a, b) => a + b, 0) / data.avgPos.length)
                 : '-';
 
             const box = document.createElement('div');
@@ -5556,6 +5756,7 @@ function renderVerticalStackInto(container, p) {
         container.appendChild(tower);
     });
 }
+
 function getAdjustmentProgress(analysis) {
     if (!analysis || !analysis.valves) {
         return { done: 0, total: 0, percent: 0 };
@@ -5879,18 +6080,21 @@ function renderHorizontalMap(container) {
     if (!p) return;
 
     const currentMode = window.currentMode || 'home';
-    const activeValves = p.modes[currentMode]?.valves || [];
+    const activeValves = getActiveValvesForMap(p);
 
     const supplies = (p.ducts || []).filter(d => d.type === 'supply');
     const extracts = (p.ducts || []).filter(d => d.type === 'extract');
 
+    // 🧩 Venttiilit ilman parentDuctId:tä
+    const unassignedValves = activeValves.filter(v =>
+        v.parentDuctId == null
+    );
+
     /* =====================================================
        RENDER DUCT
        ===================================================== */
-    const renderDuct = (d, color) => {
-
-        const valves = activeValves.filter(v => v.parentDuctId === d.id);
-        if (valves.length === 0) return '';
+    const renderDuct = (title, color, valves) => {
+        if (!valves || valves.length === 0) return '';
 
         const analysis =
             typeof analyzeTrunkRelative === 'function'
@@ -5900,18 +6104,16 @@ function renderHorizontalMap(container) {
         return `
             <div class="vis-duct-row">
                 <div class="vis-duct-header" style="color:${color}">
-                    ${d.name}
+                    ${title}
                 </div>
 
                 <div class="vis-valves-wrap">
                     ${valves.map(v => {
 
-                        const idx = p.valves.indexOf(v);
-                        const res = analysis?.valves.find(r => String(r.id) === String(v.id));
+                        const res = analysis?.valves?.find(r => String(r.id) === String(v.id));
                         const code = res?.code || 'OK';
                         const isIndex = res?.isIndex === true;
 
-                        // 🔒 LUKITUKSEN SYY
                         const lockReason =
                             typeof getValveLockReason === 'function'
                                 ? getValveLockReason(v, analysis)
@@ -5926,25 +6128,27 @@ function renderHorizontalMap(container) {
                         if (isIndex) cardClass += ' idx-glow';
                         if (!canClick) cardClass += ' v-disabled';
 
+                        const clickAttr =
+                            canClick && v?.id != null
+                                ? `onclick="openValveById('${escapeJsString(v.id)}')"`
+                                : '';
+
                         return `
-                            <div class="${cardClass}"
-                                 ${canClick ? `onclick="openValvePanel(${idx})"` : ''}>
+                            <div class="${cardClass}" ${clickAttr}>
 
                                 ${isPro() ? `
-                                    <!-- 🔒 LUKKO -->
                                     <div class="lock-btn"
-                                         onclick="event.stopPropagation(); toggleIndexLock(${v.id}, '${d.type}')">
+                                        onclick="event.stopPropagation(); toggleIndexLock(${v.id}, '${v.type || ''}')">
                                         🔒
                                     </div>
 
-                                    <!-- 👑 INDEKSI -->
                                     ${isIndex ? `<div class="idx-icon">👑</div>` : ''}
                                 ` : ''}
 
                                 <div class="vc-room">${v.room || '-'}</div>
 
                                 ${isPro() ? `
-                                    <div class="vc-val">${(v.flow || 0).toFixed(1)} l/s</div>
+                                    <div class="vc-val">${(Number(v.flow) || 0).toFixed(1)} l/s</div>
                                     <div class="vc-pos">Av: ${v.pos ?? '-'}</div>
                                     <div class="vc-pa">${v.measuredP ?? '-'} Pa</div>
                                 ` : `
@@ -5958,8 +6162,8 @@ function renderHorizontalMap(container) {
                                     : ''}
 
                                 ${lockReason ? `
-                                    <div class="vc-lock-reason" title="${lockReason}">
-                                        🔒 ${lockReason}
+                                    <div class="vc-lock-reason" title="${escapeHtml(lockReason)}">
+                                        🔒 ${escapeHtml(lockReason)}
                                     </div>
                                 ` : ''}
                             </div>
@@ -5971,14 +6175,13 @@ function renderHorizontalMap(container) {
     };
 
     /* =====================================================
-       KONEKORTTI
+       KONEKORTTI + SISÄLTÖ
        ===================================================== */
-    const machine = p.modes[currentMode]?.machines?.[0];
+    const machine = p.modes?.[currentMode]?.machines?.[0];
 
-    let html = `
+    const html = `
         <div style="display:flex; gap:16px; align-items:flex-start;">
 
-            <!-- VASEMMALLA: KONE -->
             <div style="min-width:260px;">
                 <div class="vis-machine-card"
                     style="${window.currentPhase !== 'ADJUST_MACHINE'
@@ -6005,10 +6208,20 @@ function renderHorizontalMap(container) {
                 </div>
             </div>
 
-            <!-- OIKEALLA: VENTTIILIT -->
             <div style="flex:1;">
-                ${supplies.map(d => renderDuct(d, '#1976D2')).join('')}
-                ${extracts.map(d => renderDuct(d, '#d32f2f')).join('')}
+                ${supplies.map(d =>
+                    renderDuct(d.name, '#1976D2',
+                        activeValves.filter(v => String(v.parentDuctId) === String(d.id))
+                    )
+                ).join('')}
+
+                ${extracts.map(d =>
+                    renderDuct(d.name, '#d32f2f',
+                        activeValves.filter(v => String(v.parentDuctId) === String(d.id))
+                    )
+                ).join('')}
+
+                ${renderDuct('Muut venttiilit (ei liitetty runkoon)', '#555', unassignedValves)}
             </div>
 
         </div>
@@ -7052,10 +7265,28 @@ function closeKLibraryModal() {
     ov.style.display = 'none';
 }
 function openKCategory(type) {
+    window.uiState.activeKLibraryType = type;
+
     ensureUserKLibraryReady();
 
-    const list = [...window.userKLibrary[type]]
-        .sort((a, b) => (a.size || 0) - (b.size || 0) || a.opening - b.opening);
+    const arr = Array.isArray(window.userKLibrary?.[type])
+        ? window.userKLibrary[type]
+        : [];
+
+    // Ryhmittele venttiileittäin: (malli + koko)
+    const groups = {};
+    arr.forEach((r, idx) => {
+        const model = String(r.model || '—').trim() || '—';
+        const size = Number(r.size) || 0;
+        const key = `${model}__${size}`;
+        if (!groups[key]) {
+            groups[key] = { model, size, indices: [] };
+        }
+        groups[key].indices.push(idx);
+    });
+
+    const groupList = Object.values(groups)
+        .sort((a, b) => (a.size - b.size) || a.model.localeCompare(b.model));
 
     let ov = document.getElementById('k-cat-overlay');
     if (!ov) {
@@ -7065,49 +7296,265 @@ function openKCategory(type) {
         document.body.appendChild(ov);
     }
 
+    const title =
+        type === 'supply' ? 'Tuloventtiilit' :
+        type === 'extract' ? 'Poistoventtiilit' :
+        type === 'damper' ? 'Säätöpellit' :
+        'Muut';
+
     ov.innerHTML = `
-        <div class="modal" style="max-width:800px;">
-            <div class="modal-header">
-                ${type === 'supply' ? 'Tuloventtiilit'
-                  : type === 'extract' ? 'Poistoventtiilit'
-                  : type === 'damper' ? 'Säätöpellit'
-                  : 'Muut'}
-            </div>
+        <div class="modal" style="max-width:820px;">
+            <div class="modal-header">${title}</div>
 
             <div class="modal-content">
-                <table class="report">
-                    <thead>
-                        <tr>
-                            <th>Malli</th>
-                            <th>Ø</th>
-                            <th>Avaus</th>
-                            <th>K</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${list.map((r, i) => `
-                            <tr onclick="editKEntry('${type}', ${i})">
-                                <td>${r.model || '—'}</td>
-                                <td>${r.size || ''}</td>
-                                <td>${r.opening}</td>
-                                <td>${r.k}</td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
+
+                <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">
+                    <input id="k-lib-search" class="input input-sm"
+                        placeholder="Hae (malli / koko)…"
+                        style="flex:1; min-width:220px;"
+                        oninput="renderKCategoryGroupedList('${type}')"
+                    />
+                    <div style="font-size:12px; color:#666;">
+                        Venttiilejä: <b>${groupList.length}</b> • Rivejä: <b>${arr.length}</b>
+                    </div>
+                </div>
+
+                <div id="k-cat-grouped-list"></div>
+
             </div>
 
             <div class="modal-actions">
-                <button class="btn btn-primary" onclick="openAddKModal('${type}')">
-                    ➕ Lisää
-                </button>
+                <button class="btn btn-primary" onclick="openAddKModal('${type}')">➕ Lisää</button>
                 <button class="btn" onclick="closeKCategory()">Sulje</button>
             </div>
         </div>
     `;
 
     ov.style.display = 'flex';
+
+    // Renderöi lista ensimmäisen kerran
+    renderKCategoryGroupedList(type);
 }
+function renderKCategoryGroupedList(type) {
+    ensureUserKLibraryReady();
+
+    const listEl = document.getElementById('k-cat-grouped-list');
+    if (!listEl) return;
+
+    const arr = Array.isArray(window.userKLibrary?.[type])
+        ? window.userKLibrary[type]
+        : [];
+
+    const q = String(document.getElementById('k-lib-search')?.value || '')
+        .trim()
+        .toLowerCase();
+
+    // 🔧 RYHMITTELY: CASE-INSENSITIVE
+    const groups = {};
+    arr.forEach((r, idx) => {
+        const rawModel = String(r.model || '—').trim();
+        const normModel = rawModel.toUpperCase(); // 🔑
+        const size = Number(r.size) || 0;
+        const key = `${normModel}__${size}`;
+
+        if (!groups[key]) {
+            groups[key] = {
+                displayModel: rawModel, // säilytä alkuperäinen
+                normModel,
+                size,
+                indices: []
+            };
+        }
+        groups[key].indices.push(idx);
+    });
+
+    let groupList = Object.values(groups)
+        .sort((a, b) => (a.size - b.size) || a.normModel.localeCompare(b.normModel));
+
+    // 🔍 Haku
+    if (q) {
+        groupList = groupList.filter(g =>
+            `${g.displayModel} ${g.size}`.toLowerCase().includes(q)
+        );
+    }
+
+    if (groupList.length === 0) {
+        listEl.innerHTML = `<div style="color:#777; padding:8px;">Ei osumia.</div>`;
+        return;
+    }
+
+    listEl.innerHTML = `
+        <div style="display:flex; flex-direction:column; gap:8px;">
+            ${groupList.map(g => `
+                <div
+                    style="
+                        border:1px solid #e0e0e0;
+                        border-radius:10px;
+                        padding:10px;
+                        display:flex;
+                        align-items:center;
+                        justify-content:space-between;
+                        background:#fff;
+                    "
+                >
+                    <div>
+                        <div style="font-weight:700;">
+                            ${escapeHtml(g.displayModel)} ${g.size ? `Ø${g.size}` : ''}
+                        </div>
+                        <div style="font-size:12px; color:#666;">
+                            Tallennettuja rivejä: ${g.indices.length}
+                        </div>
+                    </div>
+
+                   <div style="display:flex; gap:6px;">
+    <button class="btn btn-success btn-xs"
+        onclick="openValveById(buildValveId({
+            type: '${type}',
+            model: '${g.normModel}',
+            size: ${Number(g.size)}
+        }))">
+        Avaa
+    </button>
+</div>
+
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+function openKValveDetailModal(type, model, size) {
+    ensureUserKLibraryReady();
+
+    const arr = Array.isArray(window.userKLibrary?.[type])
+        ? window.userKLibrary[type]
+        : [];
+
+    const normModel = String(model || '—').trim().toUpperCase();
+
+    const rows = arr
+        .map((r, idx) => ({
+            ...r,
+            _idx: idx,
+            _normModel: String(r.model || '—').trim().toUpperCase()
+        }))
+        .filter(r =>
+            r._normModel === normModel &&
+            Number(r.size) === Number(size)
+        )
+        .sort((a, b) => Number(a.opening) - Number(b.opening));
+
+    let ov = document.getElementById('k-valve-overlay');
+    if (!ov) {
+        ov = document.createElement('div');
+        ov.id = 'k-valve-overlay';
+        ov.className = 'modal-overlay';
+        document.body.appendChild(ov);
+    }
+
+    const title =
+        `${String(model || '—').trim()} ${size ? `Ø${Number(size)}` : ''}`;
+
+    ov.innerHTML = `
+        <div class="modal k-valve-modal">
+
+            <div class="modal-header">
+                📌 ${escapeHtml(title)}
+                <div style="font-size:12px; color:#666; margin-top:4px;">
+                    Tallennettuja avauksia: ${rows.length}
+                </div>
+            </div>
+
+            <div class="modal-content">
+                ${
+                    rows.length === 0
+                        ? `<div style="color:#777; padding:8px;">Ei tallennettuja avauksia.</div>`
+                        : `
+                        <div style="display:flex; flex-direction:column; gap:10px;">
+                            ${rows.map(r => `
+                                <div
+                                    style="
+                                        border:1px solid #ddd;
+                                        border-radius:10px;
+                                        padding:10px;
+                                        background:#fff;
+                                        display:flex;
+                                        flex-direction:column;
+                                        gap:8px;
+                                    "
+                                >
+                                    <div style="display:flex; justify-content:space-between;">
+                                        <div>
+                                            <div style="font-weight:700;">
+                                                Avaus: ${Number(r.opening)}
+                                            </div>
+                                            <div style="font-size:13px;">
+                                                K-arvo: <b>${Number(r.k).toFixed(2)}</b>
+                                            </div>
+                                        </div>
+                                        <div style="font-size:12px; color:#666;">
+                                            ${escapeHtml(String(r.note || '').trim())}
+                                        </div>
+                                    </div>
+
+                                    <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                                        <button class="btn btn-success btn-xs" style="flex:1;"
+                                            onclick="applyKFromLibraryToActiveValve(${Number(r.opening)}, ${Number(r.k)})">
+                                            ▶️ Käytä
+                                        </button>
+
+                                        <button class="btn btn-edit btn-xs" style="flex:1;"
+                                            onclick="editKEntry('${type}', ${r._idx})">
+                                            ✏️ Muokkaa
+                                        </button>
+
+                                        <button class="btn btn-danger btn-xs" style="flex:1;"
+                                            onclick="deleteKEntry('${type}', ${r._idx})">
+                                            🗑️ Poista
+                                        </button>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                        `
+                }
+            </div>
+
+            <div class="modal-actions" style="display:flex; gap:8px;">
+                <button class="btn btn-primary"
+                    onclick="openAddKForValve('${type}', '${escapeHtml(model)}', ${Number(size)})">
+                    ➕ Lisää
+                </button>
+
+                <button class="btn btn-cancel"
+                    onclick="closeKValveDetailModal()">
+                    ❌ Sulje
+                </button>
+            </div>
+
+        </div>
+    `;
+
+    ov.style.display = 'flex';
+}
+
+
+
+function closeKValveDetailModal() {
+    const ov = document.getElementById('k-valve-overlay');
+    if (ov) ov.style.display = 'none';
+}
+
+/** Pieni apu: HTML-escape jotta malli/huom eivät riko UI:ta */
+function escapeHtml(str) {
+    return String(str || '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+}
+
 function editKEntry(type, idx) {
     const item = window.userKLibrary[type][idx];
     if (!item) return;
@@ -7158,7 +7605,7 @@ function closeEditK() {
     if (ov) ov.style.display = 'none';
 }
 function saveEditedK(type, idx) {
-    const item = window.userKLibrary[type][idx];
+    const item = window.userKLibrary[type]?.[idx];
     if (!item) return;
 
     item.model = document.getElementById('edit-k-model').value.trim();
@@ -7168,8 +7615,11 @@ function saveEditedK(type, idx) {
 
     saveUserKLibrary();
     closeEditK();
-    openKCategory(type);
+
+    // 🔁 Päivitä NIMENOMAAN tämä venttiili
+    refreshOpenKValveModal(type, item.model, item.size);
 }
+
 
 function deleteEditedK(type, idx) {
     const ok = confirm('Poistetaanko tämä K-arvo?');
@@ -7518,6 +7968,14 @@ function closeKCategory() {
         closeValvePanel();
     };
 }
+function buildValveId({ type, model, size }) {
+    return [
+        String(type || '').toLowerCase(),
+        String(model || '').trim().toUpperCase(),
+        Number(size)
+    ].join('::');
+}
+
 
 function updateWorkflowHint(p) {
     const el = document.getElementById('workflowHint');

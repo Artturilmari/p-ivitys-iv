@@ -1092,30 +1092,74 @@ table.report th { background: #f0f0f0; }
             background:none !important;
         }
     }
-    /* ===============================
-   PERUUTA / SULJE -NAPIT
+   /* ===============================
+   🔴 PERUUTA / SULJE -NAPIT
    =============================== */
-.btn-cancel {
-    background-color: #c62828; /* punainen */
-    color: #fff;
+
+.btn.btn-cancel {
+    background-color: #c62828 !important;
+    color: #ffffff !important;
+    border: none !important;
+}
+
+.btn.btn-cancel:hover {
+    background-color: #b71c1c !important;
+}
+
+.btn.btn-cancel:active {
+    background-color: #8e0000 !important;
+}
+
+
+/* ===============================
+   🎨 YLEISET TOIMINTONAPIT
+   =============================== */
+
+.btn-primary {
+    background-color: #1565c0;
+    color: #ffffff;
+}
+
+.btn-success {
+    background-color: #2e7d32;
+    color: #ffffff;
+}
+
+.btn-warning {
+    background-color: #ef6c00;
+    color: #ffffff;
+}
+
+.btn-edit {
+    background-color: #1565c0 !important;
+    color: #ffffff !important;
     border: none;
 }
 
-.btn-cancel:hover {
-    background-color: #b71c1c;
+.btn-edit:hover {
+    background-color: #0d47a1 !important;
 }
 
-.btn-cancel:active {
-    background-color: #8e0000;
+.btn-edit:active {
+    background-color: #08306b !important;
 }
-.btn-cancel {
-    background-color: #c62828;
-    color: #fff;
+
+.btn-disabled,
+button:disabled {
+    background-color: #cccccc !important;
+    color: #777777 !important;
+    cursor: not-allowed;
+    opacity: 0.6;
 }
-/* K-kirjaston luokkanapit */
+
+
+/* ===============================
+   📚 K-KIRJASTON LUOKKANAPIT
+   =============================== */
+
 .k-lib-category-btn {
-    background-color: #1976d2; /* sininen */
-    color: #ffffff;            /* valkoinen teksti */
+    background-color: #1976d2;
+    color: #ffffff;
     border: none;
     width: 100%;
     padding: 12px;
@@ -1129,43 +1173,105 @@ table.report th { background: #f0f0f0; }
 .k-lib-category-btn:hover {
     background-color: #1565c0;
 }
-/* ===== YLEISET TOIMINTAVÄRIT ===== */
 
-.btn-cancel {
-    background: #c62828 !important;
-    color: #fff !important;
-    border: none;
-}
 
-.btn-cancel:hover {
-    background: #b71c1c !important;
-}
+/* ===============================
+   📱 MODAALIT – MOBIILI EDELLÄ
+   =============================== */
 
-.btn-primary {
-    background: #1565c0;
-    color: #fff;
-}
-
-.btn-success {
-    background: #2e7d32;
-    color: #fff;
+.modal {
+    width: 96vw;
+    max-width: 680px;
+    max-height: 92vh;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
 }
 
-.btn-warning {
-    background: #ef6c00;
-    color: #fff;
+.modal-content {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 10px;
 }
 
-.btn-disabled,
-button:disabled {
-    background: #ccc !important;
-    color: #777 !important;
-    cursor: not-allowed;
+.modal-actions {
+    flex-shrink: 0;
+    padding: 8px;
+    border-top: 1px solid #dddddd;
+    background-color: #ffffff;
 }
-.btn-disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
+
+
+/* ===============================
+   📱 K-VENTTIILIMODAALI
+   =============================== */
+
+.k-valve-modal {
+    width: 96vw;
+    max-width: 640px;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
 }
+
+.k-valve-modal table {
+    width: 100%;
+    table-layout: fixed;
+    font-size: 13px;
+}
+
+.k-valve-modal th,
+.k-valve-modal td {
+    padding: 6px 4px;
+    word-break: break-word;
+}
+
+.k-valve-modal .btn-xs {
+    padding: 6px 8px;
+    font-size: 14px;
+    min-width: 44px; /* kosketusystävällinen */
+}
+
+.k-valve-modal button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+
+/* ===============================
+   📱 TOIMINTONAPIT MOBIILISSA
+   =============================== */
+
+@media (max-width: 520px) {
+
+    /* Toiminnot-sarake allekkain */
+    .k-valve-modal td:last-child {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        align-items: stretch;
+    }
+
+    .k-valve-modal .btn-xs {
+        width: 100%;
+    }
+}
+
+
+/* ===============================
+   🔴 VARMISTUS: SULJE PUNAINEN KAIKISSA MODAALEISSA
+   =============================== */
+
+.modal-actions .btn-cancel,
+.modal-actions button[onclick*="close"] {
+    background-color: #c62828 !important;
+    color: #ffffff !important;
+}
+
 
       
     /* ROOM PANEL END */
