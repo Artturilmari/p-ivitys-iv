@@ -1272,6 +1272,811 @@ button:disabled {
     color: #ffffff !important;
 }
 
+/* =====================================================
+   IV-KARTTA – REALISTINEN v1 (VAAKAPUTKET + VENTTIILIT)
+   ===================================================== */
 
-      
+/* KOKO KARTAN PERUSRUUTU */
+.vis-map {
+    display: grid;
+    grid-template-columns: 260px 40px 1fr;
+    grid-template-rows: auto auto;
+    gap: 32px;
+    align-items: center;
+    padding: 16px;
+}
+
+/* =====================
+   KONE
+   ===================== */
+
+.vis-machine-wrap {
+    grid-row: 1 / span 2;
+    grid-column: 1;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+/* KONEEN LIITOS RUNKOIHIN */
+.vis-connector {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    position: relative;
+}
+
+.vis-connector::before {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 10%;
+    bottom: 10%;
+    width: 6px;
+    background: #999;
+    border-radius: 4px;
+    transform: translateX(-50%);
+}
+
+/* =====================
+   RUNKOPUTKET
+   ===================== */
+
+.vis-trunk {
+    position: relative;
+    padding: 20px 0 20px 24px;
+}
+
+/* VARSINAINEN PUTKI */
+.vis-trunk::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 50%;
+    width: 100%;
+    height: 8px;
+    transform: translateY(-50%);
+    border-radius: 5px;
+}
+
+/* TULO */
+.vis-trunk.supply::before {
+    background: linear-gradient(to right, #1565c0, #64b5f6);
+}
+
+/* POISTO */
+.vis-trunk.extract::before {
+    background: linear-gradient(to right, #c62828, #ef9a9a);
+}
+
+/* =====================
+   VENTTIILIT PUTKEN VARRELLA
+   ===================== */
+
+.vis-valves-wrap {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 16px;
+    position: relative;
+    padding-left: 24px;
+    z-index: 2;
+}
+/* ===============================
+   PUTKIRIVI – SALLI YLIVUOTO
+   =============================== */
+
+.vis-duct-row{
+  position: relative;
+  overflow: visible; /* 🔑 indeksilippu saa nousta */
+}
+
+/* Venttiilien rivi putken päällä */
+.vis-valves-wrap{
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  overflow: visible; /* 🔑 tämä oli kriittinen */
+  padding-top: 26px; /* 🔑 tilaa indeksilipulle */
+}
+
+
+/* VENTTIILIKORTTI */
+.v-card {
+    background: #ffffff;
+    border-radius: 8px;
+    padding: 8px 10px;
+    min-width: 90px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+    position: relative;
+    z-index: 3;
+    cursor: pointer;
+}
+
+/* PIENI VISUAALINEN LIITOS PUTKEEN */
+.v-card::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    bottom: -6px;
+    width: 12px;
+    height: 6px;
+    background: inherit;
+    transform: translateX(-50%);
+    clip-path: polygon(0 0, 100% 0, 50% 100%);
+}
+
+/* =====================
+   KORTTIEN TILAT
+   ===================== */
+
+.v-card.v-disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.v-card.idx-glow {
+    box-shadow: 0 0 0 2px gold, 0 2px 6px rgba(0,0,0,0.2);
+}
+
+/* =====================
+   MOBIILITUKI (vaakaskrolli)
+   ===================== */
+
+@media (max-width: 900px) {
+    .vis-trunk {
+        overflow-x: auto;
+    }
+
+    .vis-valves-wrap {
+        min-width: max-content;
+        padding-bottom: 12px;
+    }
+}
+/* =====================================================
+   VENTTIILIKORTIT – KOKO, KONTRASTI, KLIKATTAVUUS
+   ===================================================== */
+
+/* Peruskortti – pienempi ja terävämpi */
+.v-card {
+    background: #ffffff;
+    border-radius: 6px;
+    padding: 6px 8px;
+    min-width: 64px;
+    font-size: 12px;
+    line-height: 1.2;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+    position: relative;
+    z-index: 3;
+
+    /* TÄRKEÄT */
+    opacity: 1 !important;
+    cursor: pointer !important;
+    pointer-events: auto !important;
+}
+
+/* Huoneen nimi */
+.v-card .vc-room {
+    font-weight: 600;
+    font-size: 12px;
+    margin-bottom: 2px;
+}
+
+/* Arvot pienemmiksi */
+.v-card .vc-val,
+.v-card .vc-pos,
+.v-card .vc-pa {
+    font-size: 11px;
+    color: #333;
+}
+
+/* =====================
+   DISABLED-TILA OIKEASTI
+   ===================== */
+
+/* Vain jos JS lisää v-disabled */
+.v-card.v-disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+/* MUTTA: ei estä hoveria muilta */
+.v-card:not(.v-disabled):hover {
+    box-shadow: 0 0 0 2px rgba(25,118,210,0.25);
+}
+
+/* =====================
+   INDEKSIVENTTIILI
+   ===================== */
+
+.v-card.idx-glow {
+    box-shadow: 0 0 0 2px gold, 0 1px 4px rgba(0,0,0,0.25);
+}
+
+/* =====================
+   PUTKEN LIITOS (PIENEMPI)
+   ===================== */
+
+.v-card::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    bottom: -4px;
+    width: 8px;
+    height: 4px;
+    background: inherit;
+    transform: translateX(-50%);
+    clip-path: polygon(0 0, 100% 0, 50% 100%);
+}
+/* ===============================
+   JÄRJESTYSNUOLET – PIENET JA HUOMAAMATTOMAT
+   =============================== */
+
+.v-card .order-arrows {
+    display: flex;
+    justify-content: space-between;
+    gap: 4px;
+    margin-bottom: 2px;
+}
+
+.v-card .order-arrows button {
+    padding: 0 4px;
+    font-size: 11px;
+    line-height: 1;
+    min-width: auto;
+    height: 16px;
+    border-radius: 4px;
+    background: #eee;
+    color: #333;
+    border: 1px solid #ccc;
+}
+
+.v-card .order-arrows button:hover {
+    background: #ddd;
+}
+/* ===============================
+   KARTAN JÄRJESTYSNUOLET
+   =============================== */
+
+.map-arrows {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 2px;
+}
+
+.map-arrow {
+    background: transparent;
+    border: none;
+    padding: 0;
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+    color: #555;
+}
+
+.map-arrow:hover {
+    color: #000;
+    transform: scale(1.1);
+}
+
+.map-arrow:active {
+    transform: scale(0.95);
+}
+
+      /* ===============================
+   MITTAUSLISTAN JÄRJESTYSNUOLET
+   =============================== */
+
+.list-order-arrows {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.list-order-arrows button {
+    background: transparent;
+    border: none;
+    padding: 0;
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+    color: #555;
+}
+
+.list-order-arrows button:hover {
+    color: #000;
+}
+/* ===============================
+   WOW-KARTTA (desktop ensin, toimii myös mobiilissa)
+   =============================== */
+
+.map-wow{
+  --sup:#1976D2;
+  --ext:#d32f2f;
+  display:grid;
+  grid-template-columns: 280px 1fr;
+  gap:16px;
+  align-items:center;
+  padding:12px;
+}
+
+@media (max-width: 900px){
+  .map-wow{ grid-template-columns: 1fr; }
+}
+
+.map-machine{
+  display:flex;
+  justify-content:flex-start;
+  align-items:center;
+}
+
+.machine-card{
+  width:100%;
+  border:1px solid #ddd;
+  border-radius:14px;
+  background:#fff;
+  padding:12px;
+  box-shadow:0 2px 10px rgba(0,0,0,0.06);
+  cursor:pointer;
+}
+
+.machine-title{
+  font-size:16px;
+  font-weight:800;
+  color:#2c3e50;
+}
+
+.machine-sub{
+  margin-top:6px;
+  font-size:12px;
+  color:#666;
+}
+
+.map-area{
+  position:relative;
+  display:flex;
+  flex-direction:column;
+  gap:18px;
+}
+
+/* Lane: sisältää elbow + pipe */
+.map-lane{
+  overflow: visible;
+}
+
+
+.map-elbow{
+  position:absolute;
+  left:-24px;
+  top:50%;
+  width:24px;
+  height:60px;
+  transform:translateY(-50%);
+  border-left:10px solid #ccc;
+  border-top:10px solid #ccc;
+  border-top-left-radius:14px;
+  opacity:0.35;
+}
+
+.map-lane.supply .map-elbow{
+  top:40%;
+  border-left-color:var(--sup);
+  border-top-color:var(--sup);
+}
+.map-lane.extract .map-elbow{
+  top:60%;
+  border-left-color:var(--ext);
+  border-top-color:var(--ext);
+}
+
+.map-pipe{
+  overflow: visible;     /* 🔑 pakollinen */
+}
+
+
+
+.map-pipe.supply{ box-shadow:0 0 0 2px rgba(25,118,210,0.10) inset; }
+.map-pipe.extract{ box-shadow:0 0 0 2px rgba(211,47,47,0.10) inset; }
+
+.map-lane-label{
+  display:flex;
+  align-items:baseline;
+  justify-content:space-between;
+  gap:10px;
+  margin-bottom:10px;
+}
+
+.map-lane-label .tag{
+  font-weight:900;
+  letter-spacing:0.04em;
+  font-size:12px;
+}
+
+.map-lane-label .ducts{
+  font-size:11px;
+  color:#777;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+/* Venttiilikortit putken päällä */
+.map-valves-row{
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+
+  overflow-x: auto;
+  overflow-y: visible;   /* 🔑 TÄMÄ KORJAA INDEKSILIPUN */
+
+  padding-top: 28px;     /* 🔑 tilaa lipulle */
+  padding-bottom: 6px;
+}
+
+.map-empty{
+  font-size:12px;
+  color:#888;
+  padding:8px;
+}
+
+/* ===============================
+   VENTTIILIKORTTI
+   =============================== */
+
+.map-valve{
+  min-width: 170px;
+  max-width: 200px;
+  border-radius:14px;
+  border:1px solid #ddd;
+  background:#fff;
+  box-shadow:0 2px 8px rgba(0,0,0,0.06);
+  padding:10px 10px 12px;
+  position:relative;
+  overflow:visible; /* 🔑 indeksilippu saa näkyä */
+}
+
+@media (max-width: 900px){
+  .map-valve{
+    min-width: 155px;
+    max-width: 180px;
+    padding:8px 8px 10px;
+  }
+}
+
+.map-valve.clickable{ cursor:pointer; }
+.map-valve.disabled{ opacity:0.6; cursor:default; }
+
+/* Tilavärit */
+.map-valve.ok{ border-left:5px solid #2e7d32; }
+.map-valve.warn{ border-left:5px solid #f9a825; }
+.map-valve.lock{ border-left:5px solid #757575; }
+.map-valve.index{ border-left:5px solid #6a1b9a; }
+
+/* ===============================
+   KORTIN SISÄLTÖ
+   =============================== */
+
+.map-valve-top{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:6px;
+}
+
+.map-room{
+  font-weight:900;
+  font-size:12px;
+  color:#2c3e50;
+  line-height:1.2;
+  text-align:center;
+  width:100%;
+}
+
+/* Mitta-arvot */
+.map-metrics{
+  margin-top:6px;
+  display:flex;
+  gap:6px;
+  flex-wrap:wrap;
+  font-size:10.5px;
+  color:#444;
+}
+
+.map-metrics .m{
+  background:#f6f6f6;
+  padding:2px 6px;
+  border-radius:999px;
+  font-weight:700;
+}
+
+/* Ohjeteksti */
+.map-advice{
+  margin-top:8px;
+  font-size:10.5px;
+  font-weight:900;
+  line-height:1.3;
+  color:#111;
+  background:#fff8e1;
+  border:1px solid rgba(249,168,37,0.35);
+  padding:6px 8px;
+  border-radius:12px;
+}
+
+/* Lukon syy */
+.map-lock{
+  margin-top:6px;
+  font-size:10.5px;
+  color:#555;
+}
+
+/* Pieni badge (esim OK / LOCK) */
+.map-badge{
+  position:absolute;
+  top:8px;
+  right:8px;
+  font-size:10px;
+  font-weight:900;
+  color:#6a1b9a;
+}
+
+/* ===============================
+   KARTAN SIIRTONUOLET
+   =============================== */
+
+.map-move{
+  display:flex;
+  gap:4px;
+}
+
+.map-arrow{
+  background:transparent;
+  border:none;
+  padding:0;
+  font-size:11px;
+  line-height:1;
+  cursor:pointer;
+  color:#555;
+}
+
+.map-arrow:hover{
+  color:#000;
+  transform:scale(1.12);
+}
+
+.map-arrow:active{
+  transform:scale(0.95);
+}
+
+/* ===============================
+   INDEKSIVENTTIILIN LIPPU (WOW)
+   =============================== */
+
+.map-index-flag{
+  position:absolute;
+  top:-22px;                /* 🔑 tarpeeksi ylös */
+  left:50%;
+  transform:translateX(-50%);
+  padding:4px 12px;
+  font-size:11px;
+  font-weight:900;
+  letter-spacing:0.04em;
+  border-radius:999px;
+  background:#6a1b9a;
+  color:#fff;
+  box-shadow:0 4px 10px rgba(0,0,0,0.22);
+  z-index:10;
+  pointer-events:none;
+  white-space:nowrap;
+}
+
+/* ===============================
+   VISUAALINEN IV-KONE (WOW V2)
+   =============================== */
+
+.map-machine-col {
+  position: relative;
+  min-width: 220px;
+}
+
+.map-machine {
+  position: relative;
+  width: 200px;
+  min-height: 130px;
+  background: linear-gradient(180deg, #fdfdfd, #eeeeee);
+  border: 2px solid #bdbdbd;
+  border-radius: 18px;
+  box-shadow: 0 10px 26px rgba(0,0,0,0.18);
+  padding: 14px;
+}
+
+.map-machine-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.map-machine-icon {
+  font-size: 22px;
+}
+
+.map-machine-name {
+  font-weight: 900;
+  font-size: 14px;
+  color: #263238;
+}
+
+.map-machine-mode {
+  font-size: 11px;
+  color: #666;
+  margin-top: 2px;
+}
+
+.map-machine-meta {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #333;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.map-machine-chip {
+  background: #e3f2fd;
+  color: #0d47a1;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 800;
+  width: fit-content;
+}
+
+/* ===== KONEEN PORTIT ===== */
+
+.machine-port {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  z-index: 3;
+}
+
+.machine-port.supply {
+  top: 10px;
+  right: -7px;
+  background: #1976d2;
+}
+
+.machine-port.extract {
+  bottom: 10px;
+  right: -7px;
+  background: #d32f2f;
+}
+
+/* ===============================
+   PUTKIGRAFIIKKA (WOW V2)
+   =============================== */
+
+.map-wow {
+  display: flex;
+  gap: 32px;
+  align-items: flex-start;
+}
+
+/* Kartan oikea puoli */
+.map-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 34px;
+}
+
+/* ===== YKSI LINJA (TULO / POISTO) ===== */
+
+.map-lane {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+}
+
+/* L-muotoinen liitos koneesta */
+.map-link {
+  position: relative;
+  width: 42px;
+  height: 42px;
+  flex-shrink: 0;
+}
+
+.map-link::before,
+.map-link::after {
+  content: '';
+  position: absolute;
+  background: currentColor;
+}
+
+/* Vaakasuora */
+.map-link::before {
+  width: 100%;
+  height: 6px;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+/* Pystysuora */
+.map-link::after {
+  width: 6px;
+  height: 100%;
+  left: 0;
+  top: 0;
+}
+
+/* Värit */
+.map-lane.supply {
+  color: #1976d2;
+}
+
+.map-lane.extract {
+  color: #d32f2f;
+}
+
+/* ===== PUTKEN PYSTYRUNK O ===== */
+
+.map-pipe {
+  border-left: 6px solid currentColor;
+  padding-left: 22px;
+}
+
+/* Lane-otsikko */
+.map-lane-label {
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  margin-bottom: 10px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.map-lane-label .ducts {
+  font-weight: 600;
+  color: #666;
+  font-size: 10px;
+}
+
+/* Venttiilit rivissä */
+.map-valves-row {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+/* Tyhjä */
+.map-empty {
+  font-size: 12px;
+  color: #999;
+  padding: 12px 0;
+}
+
+/* ===============================
+   MOBIILI
+   =============================== */
+
+@media (max-width: 900px) {
+  .map-wow {
+    flex-direction: column;
+  }
+
+  .map-machine {
+    width: 170px;
+  }
+
+  .map-link {
+    width: 28px;
+    height: 28px;
+  }
+
+  .map-pipe {
+    padding-left: 18px;
+  }
+}
+
     /* ROOM PANEL END */
