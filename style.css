@@ -1162,6 +1162,10 @@ button:disabled {
     color: #777 !important;
     cursor: not-allowed;
 }
+.btn-disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
 
       
     /* ROOM PANEL END */

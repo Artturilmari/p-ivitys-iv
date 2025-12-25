@@ -129,29 +129,103 @@ function saveUserKLibrary() {
         console.warn('saveUserKLibrary failed', e);
     }
 }
-function saveToUserKLibrary({ type, opening, k, note }) {
-    ensureUserKLibraryReady();
-
-    if (!type || !['supply','extract','damper','other'].includes(type)) {
-        alert('Virhe: tuntematon K-luokka');
+function saveToUserKLibrary({
+    flowType,        // 'supply' | 'extract'
+    manufacturer,
+    model,
+    size,
+    opening,
+    k
+}) {
+    if (!flowType || !model || !size || !isFinite(opening) || !isFinite(k)) {
+        console.warn('K-kirjaston tallennus: puutteelliset tiedot');
         return false;
     }
 
-    const entry = {
-        opening: Number(opening),
-        k: Number(k),
-        note: String(note || '').trim()
-    };
+    if (!window.userKLibrary) window.userKLibrary = {};
+    if (!window.userKLibrary[flowType]) window.userKLibrary[flowType] = {};
 
-    if (!entry.opening || !entry.k) {
-        alert('Anna koko ja K-arvo');
-        return false;
+    const valveId = buildValveId({ manufacturer, model, size });
+
+    if (!window.userKLibrary[flowType][valveId]) {
+        window.userKLibrary[flowType][valveId] = {
+            valveId,
+            displayName: buildValveDisplayName({ manufacturer, model, size }),
+            manufacturer,
+            model,
+            size: Number(size),
+            entries: []
+        };
     }
 
-    window.userKLibrary[type].push(entry);
+    const entries = window.userKLibrary[flowType][valveId].entries;
+
+    // Estä tuplarivi samalla avauksella
+    const exists = entries.find(e => Number(e.opening) === Number(opening));
+    if (exists) {
+        exists.k = Number(k); // päivitä
+    } else {
+        entries.push({
+            opening: Number(opening),
+            k: Number(k)
+        });
+    }
+
+    // Järjestä avauksen mukaan
+    entries.sort((a, b) => a.opening - b.opening);
+
     saveUserKLibrary();
     return true;
 }
+function migrateUserKLibraryIfNeeded() {
+    const lib = window.userKLibrary;
+    if (!lib) return;
+
+    ['supply', 'extract'].forEach(flowType => {
+        const old = lib[flowType];
+        if (!old || Array.isArray(old)) return;
+
+        const migrated = {};
+
+        Object.values(old).forEach(item => {
+            // jos jo uudessa muodossa → ok
+            if (item.valveId && item.entries) {
+                migrated[item.valveId] = item;
+                return;
+            }
+
+            // yritä rakentaa uusi rakenne vanhasta
+            const valveId = buildValveId({
+                manufacturer: item.manufacturer || '',
+                model: item.model || item.note || '',
+                size: item.size || item.opening || ''
+            });
+
+            if (!migrated[valveId]) {
+                migrated[valveId] = {
+                    valveId,
+                    displayName: item.displayName || valveId,
+                    manufacturer: item.manufacturer || '',
+                    model: item.model || '',
+                    size: Number(item.size) || null,
+                    entries: []
+                };
+            }
+
+            if (item.opening && item.k) {
+                migrated[valveId].entries.push({
+                    opening: Number(item.opening),
+                    k: Number(item.k)
+                });
+            }
+        });
+
+        lib[flowType] = migrated;
+    });
+
+    saveUserKLibrary();
+}
+
 function saveCurrentKToLibrary() {
     // varmista että kirjasto on ladattu
     if (!window.userKLibrary) {
@@ -197,6 +271,17 @@ function saveCurrentKToLibrary() {
 }
 
 
+// 🔧 Päättelee venttiilin flowType valitun runkokanavan perusteella
+function getSelectedFlowTypeFromDuct() {
+    const ductEl = document.getElementById('valve-duct');
+    if (!ductEl?.value) return null;
+
+    const p = projects.find(p => p.id === activeProjectId);
+    if (!p || !Array.isArray(p.ducts)) return null;
+
+    const duct = p.ducts.find(d => String(d.id) === String(ductEl.value));
+    return duct?.type || null; // 'supply' | 'extract'
+}
 
 function saveCurrentValveToKLibrary() {
     const kValue = parseFloat(document.getElementById('valveK')?.value);
@@ -261,19 +346,210 @@ function ensureUserKLibraryReady() {
     return window.userKLibrary;
 }
 
+// 🔓 Päivittää K-kirjaston hakunapin tilan venttiilimodaalissa
+function updateKLibraryButtonState() {
+    const btn = document.getElementById('btn-show-user-k');
+    if (!btn) return;
 
-// Normalisoi avausta (sallii negatiiviset)
-function normalizeOpening(opening) {
-    if (opening === null || opening === undefined || opening === '') return null;
-    const n = parseFloat(opening);
-    return Number.isFinite(n) ? n : null;
+    const modelEl = document.getElementById('valve-model');
+    const sizeEl  = document.getElementById('valve-size');
+    const ductEl  = document.getElementById('valve-duct');
+
+    const hasModel = !!modelEl?.value;
+    const hasSize  = !!sizeEl?.value;
+    const hasDuct  = !!ductEl?.value;
+
+    if (hasModel && hasSize && hasDuct) {
+        btn.disabled = false;
+        btn.classList.remove('btn-disabled');
+        btn.title = '';
+    } else {
+        btn.disabled = true;
+        btn.classList.add('btn-disabled');
+        btn.title = 'Valitse runko, malli ja koko';
+    }
 }
+function findClosestOpening(entries, targetOpening) {
+    if (!Array.isArray(entries) || !entries.length) return null;
+
+    let best = null;
+    let bestDiff = Infinity;
+
+    entries.forEach(e => {
+        const diff = Math.abs(Number(e.opening) - Number(targetOpening));
+        if (diff < bestDiff) {
+            best = e;
+            bestDiff = diff;
+        }
+    });
+
+    return best;
+}
+
+function findMedianEntry(entries) {
+    if (!Array.isArray(entries) || !entries.length) return null;
+    const mid = Math.floor(entries.length / 2);
+    return entries[mid];
+}
+
 
 // Normalisoi K
 function normalizeKValue(k) {
     if (k === null || k === undefined || k === '') return null;
     const n = parseFloat(k);
     return Number.isFinite(n) ? n : null;
+}
+// 📚 Avaa K-kirjaston haku venttiilimodaaliin
+function openKLibraryPickerForValve(v) {
+    const listEl = document.getElementById('user-k-list');
+    if (!listEl) return;
+
+    listEl.innerHTML = '';
+    listEl.style.display = 'none';
+
+    if (!v?.flowType) {
+        alert('Valitse ensin runkokanava (tulo / poisto)');
+        return;
+    }
+
+    const modelEl = document.getElementById('valve-model');
+    const sizeEl  = document.getElementById('valve-size');
+
+    const model = modelEl?.value;
+    const sizeId = sizeEl?.value;
+
+    // Selvitä koko (mm) valveGroupsin perusteella (sizeEl.value ei ole mm!)
+    const modelKey = modelEl?.value;
+    const arr = valveGroups?.[modelKey] || [];
+    const found = arr.find(x => x.id === sizeId);
+    const sizeMm = Number(found?.size);
+
+    if (!model || !sizeMm) {
+        alert('Valitse ensin venttiilimalli ja koko');
+        return;
+    }
+
+    const valveId = buildValveId({
+        manufacturer: model.split(' ')[0] || '',
+        model,
+        size: sizeMm
+    });
+
+    const lib = window.userKLibrary?.[v.flowType];
+    if (!lib || !lib[valveId]) {
+        listEl.innerHTML = `
+            <div style="padding:6px;color:#777;">
+                Ei tallennettuja K-arvoja tälle venttiilille
+            </div>`;
+        listEl.style.display = 'block';
+        return;
+    }
+
+    const entries = Array.isArray(lib[valveId].entries) ? lib[valveId].entries.slice() : [];
+    if (!entries.length) {
+        listEl.innerHTML = `
+            <div style="padding:6px;color:#777;">
+                Ei tallennettuja K-arvoja tälle venttiilille
+            </div>`;
+        listEl.style.display = 'block';
+        return;
+    }
+
+    // Järjestä avauksen mukaan
+    entries.sort((a, b) => Number(a.opening) - Number(b.opening));
+
+    // ⭐ Suositus: jos avaus annettu → lähin, muuten mediaani
+    let recommended = null;
+    if (v.pos !== null && v.pos !== undefined && v.pos !== '') {
+        recommended = findClosestOpening(entries, Number(v.pos));
+    }
+    if (!recommended) {
+        recommended = findMedianEntry(entries);
+    }
+
+    const displayName = lib[valveId].displayName || `${model} Ø${sizeMm}`;
+
+    let html = `
+        <div style="margin-top:6px;font-size:12px;">
+            <b>${displayName}</b>
+            ${recommended ? `
+                <span style="margin-left:8px; padding:2px 6px; border-radius:10px; background:#e3f2fd; font-weight:bold;">
+                    ⭐ Suositus
+                </span>` : ''}
+        </div>
+
+        <table style="width:100%;font-size:12px;margin-top:6px;border-collapse:collapse;">
+            <thead>
+                <tr style="border-bottom:1px solid #ddd;">
+                    <th style="text-align:right;padding:6px;">Avaus</th>
+                    <th style="text-align:right;padding:6px;">K</th>
+                    <th style="padding:6px;"></th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+
+    entries.forEach(e => {
+        const isRecommended =
+            recommended &&
+            Number(e.opening) === Number(recommended.opening) &&
+            Number(e.k) === Number(recommended.k);
+
+        html += `
+            <tr style="
+                border-bottom:1px solid #f0f0f0;
+                ${isRecommended ? 'background:#e3f2fd;font-weight:bold;' : ''}
+            ">
+                <td style="text-align:right;padding:6px;">
+                    ${Number(e.opening).toFixed(1)}${isRecommended ? ' ⭐' : ''}
+                </td>
+                <td style="text-align:right;padding:6px;">
+                    ${Number(e.k).toFixed(2)}
+                </td>
+                <td style="padding:6px; text-align:right;">
+                    <button class="btn btn-xs"
+                        onclick="applyKFromLibrary(${Number(e.opening)}, ${Number(e.k)})">
+                        ${isRecommended ? 'Käytä suositeltua' : 'Käytä'}
+                    </button>
+                </td>
+            </tr>
+        `;
+    });
+
+    html += `</tbody></table>`;
+
+    listEl.innerHTML = html;
+    listEl.style.display = 'block';
+}
+
+
+
+// 📌 Palauta K-arvo ja avaus venttiilille
+function applyKFromLibrary(opening, k) {
+    const posEl = document.getElementById('valve-pos');
+    const kEl   = document.getElementById('valve-k');
+
+    if (posEl) posEl.value = Number(opening).toFixed(1);
+    if (kEl)   kEl.value   = Number(k).toFixed(2);
+
+    if (typeof updateCalculatedFlowPreview === 'function') {
+        updateCalculatedFlowPreview();
+    }
+}
+
+
+
+// 🔧 Palauttaa valitun venttiilikoon millimetreinä
+function getSelectedValveSizeMm() {
+    const sizeEl = document.getElementById('valve-size');
+    if (!sizeEl?.value) return null;
+
+    const opt = sizeEl.selectedOptions?.[0];
+    if (!opt) return null;
+
+    // opt.textContent esim "Ø125"
+    const m = opt.textContent.match(/(\d+)/);
+    return m ? Number(m[1]) : null;
 }
 
 // Rakennetaan kirjaston avain: "MALLI ØKOKO"
@@ -534,26 +810,7 @@ function calculateRelativeKSuggestion(ductId, valveIdx) {
     return indexValve.kApproved * ratio;
 }
 
-function updateCalculatedFlowPreview() {
-    const kEl  = document.getElementById('valve-k');
-    const paEl = document.getElementById('valve-pa');
-    const out  = document.getElementById('calc-flow-preview');
 
-    if (!kEl || !paEl || !out) return;
-
-    const k  = parseFloat(kEl.value);
-    const pa = parseFloat(paEl.value);
-
-    if (!isFinite(k) || !isFinite(pa) || pa <= 0) {
-        out.innerText = '';
-        return;
-    }
-
-    // Q = K * sqrt(ΔP)
-    const flow = k * Math.sqrt(pa);
-
-    out.innerHTML = `📐 Laskettu virtaus: <b>${flow.toFixed(1)} l/s</b>`;
-}
 
 function approveRelativeKsForDuct(ductId) {
     const p = projects.find(p => p.id === activeProjectId);
@@ -604,29 +861,39 @@ function calculateFlowFromK(k, pa) {
     return k * Math.sqrt(pa);
 }
 function updateCalculatedFlowPreview() {
-    const kEl = document.getElementById('valve-k');
-    const paEl = document.getElementById('valve-pa');
+    const kEl    = document.getElementById('valve-k');
+    const paEl   = document.getElementById('valve-pa');
     const flowEl = document.getElementById('valve-flow');
-    const previewEl = document.getElementById('calc-flow-preview');
+    const outEl  = document.getElementById('calc-flow-preview');
 
-    if (!kEl || !paEl || !flowEl) return;
+    // Defensiivinen: jos pakolliset puuttuvat, ei tehdä mitään
+    if (!kEl || !paEl) return;
 
-    const k = parseFloat(kEl.value);
+    const k  = parseFloat(kEl.value);
     const pa = parseFloat(paEl.value);
 
-    const flow = calculateFlowFromK(k, pa);
-
-    if (!flow) {
-        previewEl.innerText = '';
-        flowEl.value = '';
+    // Jos arvot eivät ole kelvollisia → tyhjennetään näkyvät kentät
+    if (!isFinite(k) || !isFinite(pa) || pa <= 0) {
+        if (outEl) outEl.innerText = '';
+        if (flowEl) flowEl.value = '';
         return;
     }
 
+    // Klassinen kaava: Q = K * sqrt(ΔP)
+    const flow = k * Math.sqrt(pa);
     const rounded = Math.round(flow * 10) / 10;
-    flowEl.value = rounded.toFixed(1);
 
-    previewEl.innerText = `🔢 Laskettu: K × √Pa = ${rounded.toFixed(1)} l/s`;
+    // Päivitä virtaus-kenttä jos olemassa
+    if (flowEl) {
+        flowEl.value = rounded.toFixed(1);
+    }
+
+    // Päivitä preview jos olemassa
+    if (outEl) {
+        outEl.innerHTML = `📐 Laskettu virtaus: <b>${rounded.toFixed(1)} l/s</b>`;
+    }
 }
+
 
 function renderKLibraryList(type) {
     ensureUserKLibraryReady();
@@ -1192,6 +1459,36 @@ function ensureValveIds(project) {
         }
     });
 }
+// 🔑 Normalisoi teksti ID-käyttöön
+function normalizeIdPart(str) {
+    if (!str) return '';
+    return String(str)
+        .toLowerCase()
+        .trim()
+        .replace(/[åä]/g, 'a')
+        .replace(/ö/g, 'o')
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '');
+}
+
+// 🔑 Luo venttiilin yksilöllinen ID
+function buildValveId({ manufacturer, model, size }) {
+    const parts = [];
+
+    if (manufacturer) parts.push(normalizeIdPart(manufacturer));
+    if (model) parts.push(normalizeIdPart(model));
+    if (size) parts.push(String(size).replace(/\D/g, ''));
+
+    return parts.join('_');
+}
+function buildValveDisplayName({ manufacturer, model, size }) {
+    const parts = [];
+    if (manufacturer) parts.push(manufacturer);
+    if (model) parts.push(model);
+    if (size) parts.push(`Ø${size}`);
+    return parts.join(' ');
+}
+
 function populateDuctSelectForValve(selectEl, selectedId = null) {
     if (!selectEl) return;
 
@@ -3147,18 +3444,25 @@ document.addEventListener('DOMContentLoaded', () => {
         v.style.display = 'none';
     });
 
-    // ✅ Näytä AINA etusivu aluksi
+    // ✅ Näytä aina etusivu aluksi
     const projectsView = document.getElementById('view-projects');
     if (projectsView) {
         projectsView.classList.add('active');
         projectsView.style.display = 'block';
     }
 
+    // 📚 Lataa käyttäjän K-kirjasto localStoragesta
     loadUserKLibrary();
-    initValveSelectors();
-    console.log('✔ valveGroups initialized:', Object.keys(valveGroups));
 
-    applyButtonStyles(projectsView);
+    // 🔁 Migroi vanha K-kirjastodata uuteen valveId-pohjaiseen muotoon
+    migrateUserKLibraryIfNeeded();
+
+    // 🔧 Alustukset
+    if (typeof initValveSelectors === 'function') {
+        initValveSelectors();
+    }
+
+    console.log('✔ valveGroups initialized:', Object.keys(valveGroups || {}));
 });
 
 
@@ -7008,10 +7312,9 @@ function closeKCategory() {
     const v = isNew
         ? {
             room: '',
-            apartment: '',
             parentDuctId: options.parentDuctId || '',
-            type: '',        // venttiilin malli/koko-id
-            flowType: '',    // 'supply' | 'extract' | 'damper' | 'other'
+            type: '',        // valveGroups size-id
+            flowType: '',    // supply | extract
             pos: null,
             measuredP: null,
             flow: null,
@@ -7024,18 +7327,15 @@ function closeKCategory() {
 
     if (!v) return;
 
-    // Migraatio vanhoille
+    // 🔁 flowType rungosta (myös vanhoille)
     if (!v.flowType && v.parentDuctId && Array.isArray(p.ducts)) {
-        const d = p.ducts.find(x => x.id === v.parentDuctId);
-        if (d?.type) v.flowType = d.type;
+        const d = p.ducts.find(x => String(x.id) === String(v.parentDuctId));
+        v.flowType = d?.type || '';
     }
 
-    // K-kirjaston valmius
-    if (typeof ensureUserKLibraryReady === 'function') ensureUserKLibraryReady();
-
-    // valveGroups valmius
-    if (!valveGroups || Object.keys(valveGroups).length === 0) {
-        if (typeof initValveSelectors === 'function') initValveSelectors();
+    ensureUserKLibraryReady?.();
+    if (!valveGroups || !Object.keys(valveGroups).length) {
+        initValveSelectors?.();
     }
 
     let ov = document.getElementById('valve-modal-overlay');
@@ -7051,7 +7351,7 @@ function closeKCategory() {
 
     const modelOptions =
         `<option value="">– valitse –</option>` +
-        Object.keys(valveGroups || {})
+        Object.keys(valveGroups)
             .sort()
             .map(m => `<option value="${m}" ${m === currentModel ? 'selected' : ''}>${m}</option>`)
             .join('');
@@ -7095,29 +7395,21 @@ function closeKCategory() {
                 <input id="valve-k" type="number" step="0.01" value="${v.kWorking ?? ''}">
             </label>
 
-            <!-- ✅ VAIHE B: K-kirjasto napit -->
             <div style="display:flex; gap:6px; margin-top:6px;">
                 <button class="btn btn-xs" id="btn-show-user-k">📚 Tuo omat K-arvot</button>
                 <button class="btn btn-xs" id="btn-save-user-k">💾 Tallenna K-kirjastoon</button>
             </div>
+
             <div id="user-k-list" style="display:none;margin-top:8px;font-size:12px;"></div>
 
             <label>Virtaus (l/s)
-                <input id="valve-flow"
-                       type="number"
-                       step="0.1"
-                       value="${v.flow ?? ''}"
-                       readonly
+                <input id="valve-flow" type="number" readonly
                        style="background:#f5f5f5;font-weight:bold;">
             </label>
 
             <label>Tavoite (l/s)
-                <input id="valve-target"
-                       type="number"
-                       step="0.1"
-                       value="${v.target ?? ''}">
+                <input id="valve-target" type="number" step="0.1" value="${v.target ?? ''}">
             </label>
-
         </div>
     </div>
 
@@ -7142,37 +7434,33 @@ function closeKCategory() {
     const kEl      = document.getElementById('valve-k');
     const flowEl   = document.getElementById('valve-flow');
     const targetEl = document.getElementById('valve-target');
-    const listBox  = document.getElementById('user-k-list');
 
-    // ===== RUNKO → flowType =====
-    if (typeof populateDuctSelectForValve === 'function') {
-        populateDuctSelectForValve(ductEl, v.parentDuctId);
-    }
+    // ===== RUNKO =====
+    populateDuctSelectForValve?.(ductEl, v.parentDuctId);
     ductEl.value = v.parentDuctId || '';
 
     ductEl.onchange = () => {
         v.parentDuctId = ductEl.value || '';
-        if (Array.isArray(p.ducts)) {
-            const d = p.ducts.find(x => x.id === v.parentDuctId);
-            if (d?.type) v.flowType = d.type;
-        }
-            updateKLibraryButtonsState(v, getSelectedValveSizeMm());
-
-
+        const d = p.ducts?.find(x => String(x.id) === String(v.parentDuctId));
+        v.flowType = d?.type || '';
+        updateKLibraryButtonState();
     };
 
     // ===== MALLI → KOKO =====
     modelEl.onchange = () => {
         sizeEl.innerHTML = `<option value="">– koko –</option>`;
         const model = modelEl.value;
-        if (!model || !valveGroups?.[model]) return;
-
+        if (!model || !valveGroups[model]) {
+            updateKLibraryButtonState();
+            return;
+        }
         valveGroups[model].forEach(s => {
             const opt = document.createElement('option');
-            opt.value = s.id;              // malli/koko-id
+            opt.value = s.id;
             opt.textContent = `Ø${s.size}`;
             sizeEl.appendChild(opt);
         });
+        updateKLibraryButtonState();
     };
 
     if (currentModel) {
@@ -7180,184 +7468,57 @@ function closeKCategory() {
         sizeEl.value = currentSizeId || '';
     }
 
-    // ===== KOKO → v.type =====
     sizeEl.onchange = () => {
         v.type = sizeEl.value || '';
-            updateKLibraryButtonsState(v, getSelectedValveSizeMm());
-
+        updateKLibraryButtonState();
     };
 
-    // ===== HELPERS =====
-    function getSelectedValveSizeMm() {
-        const sizeId = sizeEl.value;
-        if (!sizeId) return 0;
+    updateKLibraryButtonState();
+
+    // 📚 K-kirjasto
+    document.getElementById('btn-show-user-k').onclick = () => {
+        openKLibraryPickerForValve(v);
+    };
+
+    document.getElementById('btn-save-user-k').onclick = () => {
+        if (!v.flowType) return alert('Valitse runko');
+        if (!v.type) return alert('Valitse venttiilin koko');
+        if (!posEl.value || !kEl.value) return alert('Avaus ja K-arvo tarvitaan');
 
         const model = modelEl.value;
-        const arr = valveGroups?.[model];
-        if (!Array.isArray(arr)) return 0;
+        const sizeMm = Number(sizeEl.options[sizeEl.selectedIndex]?.text.replace(/\D/g,''));
 
-        const found = arr.find(x => x.id === sizeId);
-        return found?.size ? Number(found.size) : 0;
-    }
-
-    // ===== 📚 HAE K-kirjastosta =====
-    document.getElementById('btn-show-user-k').onclick = () => {
-        ensureUserKLibraryReady();
-
-        if (!v.flowType) {
-            alert('Valitse ensin runkokanava (tulo / poisto)');
-            return;
-        }
-
-        const sizeMm = getSelectedValveSizeMm();
-        if (!sizeMm) {
-            alert('Valitse ensin venttiilin koko');
-            return;
-        }
-
-        const list = (window.userKLibrary?.[v.flowType] || [])
-            .filter(r => Number(r.size) === Number(sizeMm))
-            .sort((a, b) => Number(a.opening) - Number(b.opening));
-
-        listBox.style.display = 'block';
-
-        if (list.length === 0) {
-            listBox.innerHTML = `<div style="color:#777;">Ei K-arvoja (${v.flowType} Ø${sizeMm})</div>`;
-            return;
-        }
-
-        listBox.innerHTML = `
-            <div style="font-weight:bold;margin-bottom:6px;">
-                ${v.flowType === 'supply' ? 'Tulo' : (v.flowType === 'extract' ? 'Poisto' : v.flowType)} Ø${sizeMm}
-            </div>
-            <table class="report">
-                <thead><tr><th>Malli</th><th>Avaus</th><th>K</th></tr></thead>
-                <tbody>
-                    ${list.map((r, i) => `
-                        <tr data-i="${i}" style="cursor:pointer">
-                            <td>${r.model || '—'}</td>
-                            <td>${r.opening}</td>
-                            <td>${r.k}</td>
-                        </tr>
-                    `).join('')}
-                </tbody>
-            </table>
-        `;
-
-        [...listBox.querySelectorAll('tr[data-i]')].forEach(tr => {
-            tr.onclick = () => {
-                const r = list[Number(tr.dataset.i)];
-                if (!r) return;
-
-                v.pos = Number(r.opening);
-                v.kWorking = Number(r.k);
-
-                posEl.value = r.opening;
-                kEl.value = r.k;
-
-                listBox.style.display = 'none';
-
-                if (typeof updateCalculatedFlowPreview === 'function') {
-                    updateCalculatedFlowPreview();
-                }
-            };
-        });
-    };
-
-    // ===== 💾 TALLENNA K-kirjastoon =====
-    document.getElementById('btn-save-user-k').onclick = () => {
-        ensureUserKLibraryReady();
-
-        // päivitä v ensin inputeista
-        v.pos = posEl.value === '' ? null : Number(posEl.value);
-        v.kWorking = kEl.value === '' ? null : Number(kEl.value);
-
-        if (!v.flowType) {
-            alert('Valitse ensin runkokanava (tulo / poisto)');
-            return;
-        }
-
-        const sizeMm = getSelectedValveSizeMm();
-        if (!sizeMm) {
-            alert('Valitse ensin venttiilin koko');
-            return;
-        }
-
-        if (!v.pos || !v.kWorking) {
-            alert('Avaus ja K-arvo tarvitaan tallennukseen');
-            return;
-        }
-
-        if (!window.userKLibrary[v.flowType]) window.userKLibrary[v.flowType] = [];
-
-        window.userKLibrary[v.flowType].push({
-            model: modelEl.value || '',
-            size: Number(sizeMm),
-            opening: Number(v.pos),
-            k: Number(v.kWorking),
-            note: ''
+        saveToUserKLibrary({
+            flowType: v.flowType,
+            manufacturer: model.split(' ')[0],
+            model,
+            size: sizeMm,
+            opening: Number(posEl.value),
+            k: Number(kEl.value)
         });
 
-        saveUserKLibrary();
         alert('Tallennettu K-kirjastoon');
     };
 
-    // ===== VENTTIILIN TALLENNUS PROJEKTIIN =====
     document.getElementById('saveValveBtn').onclick = () => {
-        // ⚠️ VAROITUS, jos indeksiventtiiliä muutetaan merkittävästi
-if (v._isIndex) {
-    const flow = Number(v.flow || 0);
-    const target = Number(v.target || 0);
-
-    if (flow && target) {
-        const diffPct = Math.abs((flow - target) / target);
-
-        if (diffPct > 0.15) {
-            const ok = confirm(
-                'Tämä venttiili on indeksiventtiili.\n\n' +
-                'Merkittävä muutos voi vaikuttaa suhteelliseen säätöön.\n' +
-                'Jos venttiili on ollut liikaa kuristettu, muutos voi olla perusteltu.\n\n' +
-                'Haluatko jatkaa?'
-            );
-            if (!ok) return;
-        }
-    }
-}
-
         v.room = roomEl.value || '';
-        v.parentDuctId = ductEl.value || '';
-        v.pos = posEl.value === '' ? null : Number(posEl.value);
-        v.measuredP = paEl.value === '' ? null : Number(paEl.value);
-        v.kWorking = kEl.value === '' ? null : Number(kEl.value);
-        v.target = targetEl.value === '' ? null : Number(targetEl.value);
-        v.type = sizeEl.value || v.type;
-
-        // flowType rungosta (jos ei vielä ole)
-        if (!v.flowType && Array.isArray(p.ducts)) {
-            const d = p.ducts.find(x => x.id === v.parentDuctId);
-            if (d?.type) v.flowType = d.type;
-        }
+        v.pos = posEl.value ? Number(posEl.value) : null;
+        v.measuredP = paEl.value ? Number(paEl.value) : null;
+        v.kWorking = kEl.value ? Number(kEl.value) : null;
+        v.target = targetEl.value ? Number(targetEl.value) : null;
 
         if (isNew) {
-            if (!p.modes) p.modes = {};
             if (!p.modes[mode]) p.modes[mode] = {};
             if (!Array.isArray(p.modes[mode].valves)) p.modes[mode].valves = [];
             p.modes[mode].valves.push(v);
         }
 
         saveData();
-
         renderDetailsList();
-        // 📊 Päivitä live-tilanne, jos suhteellinen säätö on näkyvissä
-if (document.getElementById('relativeAdjustPanel')?.style.display === 'block') {
-    renderRelativeLiveStatus(p, mode);
-}
-
         closeValvePanel();
-        applyCancelButtonStyles(ov);
-
     };
 }
+
 function updateWorkflowHint(p) {
     const el = document.getElementById('workflowHint');
     if (!el || !p) return;
@@ -7389,29 +7550,6 @@ function updateWorkflowHint(p) {
     }
 
     el.innerText = '⚖️ Valmis suhteelliseen säätöön';
-}
-
-function updateKLibraryButtonsState(v, sizeMm) {
-    const btnShow = document.getElementById('btn-show-user-k');
-    const btnSave = document.getElementById('btn-save-user-k');
-
-    if (!btnShow || !btnSave) return;
-
-    const ready = !!v.flowType && !!sizeMm;
-
-    btnShow.disabled = !ready;
-    btnSave.disabled = !ready;
-
-    btnShow.classList.toggle('btn-disabled', !ready);
-    btnSave.classList.toggle('btn-disabled', !ready);
-
-    if (!ready) {
-        btnShow.title = 'Valitse ensin runkokanava ja koko';
-        btnSave.title = 'Valitse ensin runkokanava ja koko';
-    } else {
-        btnShow.title = '';
-        btnSave.title = '';
-    }
 }
 
 
@@ -7447,37 +7585,7 @@ function saveValveFromModal(idx) {
     if (Number.isFinite(kManual)) {
         v.kWorking = kManual;
     }
-function updateCalculatedFlowPreview() {
-    const k = parseFloat(document.getElementById('valve-k').value);
-    const pa = parseFloat(document.getElementById('valve-pa').value);
-    const out = document.getElementById('calc-flow-preview');
 
-    if (!isFinite(k) || !isFinite(pa) || pa <= 0) {
-        out.innerText = '';
-        return;
-    }
-
-    // Klassinen kaava: Q = K * sqrt(ΔP)
-    const flow = k * Math.sqrt(pa);
-
-    out.innerHTML =
-        `📐 Laskettu virtaus: <b>${flow.toFixed(1)} l/s</b>`;
-}
-
-    // ❗️ VAROITUS JOS RUNKO PUUTTUU (EI ESTO)
-    if (!v.parentDuctId) {
-        console.warn('Venttiilillä ei ole runkoa – näkyy oletuksena poistona');
-    }
-
-    closeValvePanel();
-
-    if (typeof renderDetailsList === 'function') {
-        renderDetailsList();
-    }
-
-    if (typeof updateWorkflowHint === 'function') {
-        updateWorkflowHint();
-    }
 }
 
 // ===============================
