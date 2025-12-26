@@ -2098,5 +2098,33 @@ button:disabled {
   .map-valve.ratio-ok   { box-shadow: inset 0 0 0 2px rgba(46,125,50,0.35); }
   .map-valve.ratio-low  { box-shadow: inset 0 0 0 2px rgba(21,101,192,0.35); }
   .map-valve.ratio-high { box-shadow: inset 0 0 0 2px rgba(239,108,0,0.35); }
-  
+  .map-valve.index {
+    border: 2px solid gold;
+    background: #fffbe6;
+}
+
+.map-index-flag {
+    font-size: 12px;
+    font-weight: 800;
+    cursor: pointer;
+    user-select: none;
+}
+
+.map-index-flag:hover {
+    opacity: 0.85;
+}
+.false-index-hint {
+    margin-left: 8px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #ef6c00;
+    cursor: help;
+}
+.map-index-deficit {
+    font-size: 11px;
+    font-weight: 700;
+    color: #555;
+    margin-top: 4px;
+}
+
     /* ROOM PANEL END */
