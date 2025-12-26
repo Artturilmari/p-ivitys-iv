@@ -6400,9 +6400,22 @@ function renderHorizontalMap(container) {
             const res = analyses[v.parentDuctId]?.valves?.find(r => String(r.id) === String(v.id));
             const isIndex = res?.isIndex === true;
             const advice = buildDetailedInstruction(v, res);
+            const ratio = res?.indexRatio;
+            let ratioText = '';
+            let ratioClass = '';
+
+            if (typeof ratio === 'number' && Number.isFinite(ratio)) {
+                ratioText = ratio.toFixed(2);
+
+                if (ratio < 0.90) ratioClass = 'ratio-low';
+                else if (ratio > 1.10) ratioClass = 'ratio-high';
+                else ratioClass = 'ratio-ok';
+            }
+
 
             return `
-                <div class="map-valve ${isIndex ? 'index' : 'ok'} clickable"
+                <div class="map-valve ${isIndex ? 'index' : ''} ${ratioClass} clickable"
+
                      onclick="openValveById('${escapeJsString(v.id)}')">
                     ${isIndex ? `<div class="map-index-flag">👑 INDEKSI</div>` : ''}
                     <div class="map-valve-top">
@@ -6417,8 +6430,11 @@ function renderHorizontalMap(container) {
                         <span class="m">Av ${v.pos ?? '-'}</span>
                         <span class="m">${v.measuredP ?? '-'} Pa</span>
                     </div>
+                    ${ratioText ? `<div class="map-ratio ${ratioClass}" title="Suhde indeksiin (1.00 = sama kuin indeksi)">${ratioText}</div>` : ''}
+
                     ${advice ? `<div class="map-advice">${escapeHtml(advice)}</div>` : ''}
                 </div>
+                
             `;
         }).join('');
 
@@ -11031,7 +11047,7 @@ function analyzeTrunkRelative(valves, tolerance = 0.05) {
 
             return {
                 ...v,
-                _ratio: flow / target
+                _ratio: flow / target   // saavutettu / tavoite
             };
         })
         .filter(Boolean);
@@ -11054,6 +11070,16 @@ function analyzeTrunkRelative(valves, tolerance = 0.05) {
 
     const indexRatio = indexValve._ratio;
     let allBalanced = true;
+
+    /* =====================================================
+       2️⃣A INDEKSISUHDE PER VENTTIILI (VISUAALINEN)
+       ===================================================== */
+    analyzed.forEach(v => {
+        v.indexRatio =
+            indexRatio > 0
+                ? v._ratio / indexRatio
+                : null;
+    });
 
     /* =====================================================
        3️⃣ VENTTIILIKOHTAISET OHJEET + WORKING K
@@ -11082,10 +11108,7 @@ function analyzeTrunkRelative(valves, tolerance = 0.05) {
             if (!withinTolerance) {
                 allBalanced = false;
                 code = delta > 0 ? 'ADJUST_CHOKE' : 'ADJUST_OPEN';
-                instruction =
-                    delta > 0
-                        ? 'KURISTA'
-                        : 'AVAA';
+                instruction = delta > 0 ? 'KURISTA' : 'AVAA';
             }
         }
 
@@ -11104,9 +11127,14 @@ function analyzeTrunkRelative(valves, tolerance = 0.05) {
             code,
             instruction,
             relativeTarget,
+
+            // alkuperäinen suhde (saavutettu / tavoite)
             ratio: v._ratio,
 
-            // 🔑 UUSI
+            // 🔑 UUSI: indeksiin suhteutettu arvo (0.75 / 1.00 / 1.15)
+            indexRatio: v.indexRatio,
+
+            // 🔑 WORKING K
             workingK,
             hasApprovedK: v.approvedK !== undefined && v.approvedK !== null
         };
