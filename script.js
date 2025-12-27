@@ -6471,12 +6471,15 @@ function renderHorizontalMap(container) {
     /* ===============================
        PUTKILINJA
        =============================== */
+      
     const renderLane = (laneType, ducts, label) => {
         if (!ducts.length) return '';
 
         const valves = ducts
             .flatMap(d => activeValves.filter(v => String(v.parentDuctId) === String(d.id)))
             .sort(byOrder);
+            let laneAnalysis = null;
+
 
             const analyses = {};
             ducts.forEach(d => {
@@ -6503,25 +6506,54 @@ else if (typeof suggestIndexValve === 'function') {
     const suggestion = suggestIndexValve(dv);
     indexId = suggestion?.primary?.id ?? null;
 }
-
-// 🔹 Merkitään indeksi analyysin tulokseen
 if (indexId && analysis?.valves?.length) {
     analysis.valves = analysis.valves.map(v => ({
-    ...v,
-    isIndex: v.isIndex === true
-}));
-
-
+        ...v,
+        isIndex: String(v.id) === String(indexId)
+    }));
 }
 
-            
-                analyses[d.id] = analysis;
-            });
-            
+analyses[d.id] = analysis;
 
-        const cards = valves.map(v => {
-            const res = analyses[v.parentDuctId]?.valves?.find(r => String(r.id) === String(v.id));
-            const isIndex = res?.isIndex === true;
+}); // ducts.forEach LOPPUU TÄHÄN
+
+// 🔑 Tallenna kaikki rungot modaalille
+// 🔑 Yhdistä analyysit molemmilta laneilta
+window._lastAnalyses = {
+    ...(window._lastAnalyses || {}),
+    ...analyses
+};
+
+
+// 🔑 Lane-tason analyysi otsikkoa varten (käytetään ensimmäistä runkoa)
+laneAnalysis = analyses[ducts[0]?.id] || null;
+
+
+// ===============================
+// VENTTIILIKORTIT
+// ===============================
+const cards = valves.map(v => {
+
+    const res = analyses[v.parentDuctId]?.valves?.find(
+        r => String(r.id) === String(v.id)
+    );
+
+    const isIndex = res?.isIndex === true;
+
+    // 🔑 Venttiilikohtainen analyysi (EI sama kuin laneAnalysis)
+    const valveLaneAnalysis = analyses[v.parentDuctId] || null;
+
+const hasFalseIndexWarning =
+    isIndex &&
+    valveLaneAnalysis?.falseIndex &&
+    String(valveLaneAnalysis.falseIndex.id) === String(v.id);
+
+
+
+    
+    
+
+
             const advice = buildDetailedInstruction(v, res);
             const ratio = res?.ratio;
 
@@ -6542,10 +6574,12 @@ if (indexId && analysis?.valves?.length) {
          onclick="openValveById('${escapeJsString(v.id)}')">
 
         ${isIndex ? `
-            <div class="map-index-flag" title="Indeksiventtiili">
-                🔒 INDEKSI
-            </div>
-        ` : ''}
+    <div class="map-index-flag" title="Indeksiventtiili">
+        🔒 INDEKSI
+        ${hasFalseIndexWarning ? `<span class="index-warning" title="Mahdollinen väärä indeksi"> ⚠️</span>` : ''}
+    </div>
+` : ''}
+
 
         <div class="map-valve-top">
                      <div class="map-room">${escapeHtml(v.room || '-')}</div>
@@ -6573,33 +6607,38 @@ ${ratioText ? `
                 
             `;
         }).join('');
-// 🔎 False-indeksi tälle lanelle (jos jollain rungolla)
-const falseIndexForLane =
-    ducts
-        .map(d => analyses[d.id]?.falseIndex)
-        .find(x => x);
+
 
         return `
-            <div class="map-lane ${laneType}">
-                <div class="map-pipe ${laneType}">
-                    <div class="map-lane-label">
-    <span class="tag">${label}</span>
+    <div class="map-lane ${laneType}">
+        <div class="map-pipe ${laneType}">
+            <div class="map-lane-label">
+                <span class="tag">${label}</span>
 
-    <span class="ducts">
-        ${ducts.map(d => escapeHtml(d.name || 'Runko')).join(' • ')}
-    </span>
-
-   ${falseIndexForLane ? `
-    <span class="false-index-hint"
-          title="Mahdollinen false-indeksi: ${falseIndexForLane.reason}"
-          onclick="event.stopPropagation();
-                   unlockIndexValve();
-                   renderVisualContent?.();">
-        ⚠️ tarkista indeksi (vapauta)
+                ${laneAnalysis?.trunkReady ? `
+    <span class="lane-ready"
+          title="Kaikki venttiilit ±10 % tavoitevirrasta">
+        🟢 Valmis
     </span>
 ` : ''}
 
-</div>
+
+
+${laneAnalysis?.falseIndex ? `
+    <span class="lane-warning"
+          title="Mahdollinen false-indeksi: ${laneAnalysis.falseIndex.reason}">
+        ⚠️ tarkista indeksi
+    </span>
+` : ''}
+
+
+
+                <span class="ducts">
+                    ${ducts.map(d => escapeHtml(d.name || 'Runko')).join(' • ')}
+                </span>
+            </div>
+
+
 
                     <div class="map-valves-row">
                         ${cards || `<div class="map-empty">Ei venttiileitä</div>`}
@@ -8212,29 +8251,48 @@ function updateValveModalFlow(idx) {
                 function openValvePanel(idx = null, options = {}) {
                     const p = projects.find(x => x.id === activeProjectId);
                     if (!p) return;
+                    // 🔁 Varmista että viimeisin analyysi on olemassa ennen modaalin logiikkaa
+if (!window._lastAnalyses) {
+    const container = document.getElementById('visContent') || document.getElementById('mapContainer');
+    if (container && typeof renderHorizontalMap === 'function') {
+        renderHorizontalMap(container);
+    }
+}
+
                 
                     const mode = window.currentMode || 'home';
                     const valves = p.modes?.[mode]?.valves || [];
-                    const isNew = idx === null || idx === undefined;
-                
-                    const v = isNew
-                        ? {
-                            room: '',
-                            parentDuctId: options.parentDuctId || '',
-                            type: '',
-                            flowType: '',
-                            pos: null,
-                            measuredP: null,
-                            flow: null,
-                            target: null,
-                            kWorking: null,
-                            kApproved: null,
-                            isIndex: false
-                        }
-                        : valves[idx];
-                
-                    if (!v) return;
-                
+                   let v = null;
+let isNew = false;
+
+// idx voi olla numeroindeksi TAI venttiilin id (string)
+if (typeof idx === 'number') {
+    v = valves[idx] || null;
+} else if (typeof idx === 'string') {
+    v = valves.find(x => String(x.id) === String(idx)) || null;
+} else {
+    isNew = true;
+    v = {
+        room: '',
+        parentDuctId: options.parentDuctId || '',
+        type: '',
+        flowType: '',
+        pos: null,
+        measuredP: null,
+        flow: null,
+        target: null,
+        kWorking: null,
+        kApproved: null,
+        isIndex: false
+    };
+}
+
+if (!v) {
+    console.warn('openValvePanel: venttiiliä ei löydy, idx=', idx);
+    return;
+} 
+                window._lastOpenedValveId = v.id;
+
                     if (!v.flowType && v.parentDuctId && Array.isArray(p.ducts)) {
                         const d = p.ducts.find(x => String(x.id) === String(v.parentDuctId));
                         v.flowType = d?.type || '';
@@ -8264,72 +8322,84 @@ function updateValveModalFlow(idx) {
                             .join('');
                 
                     ov.innerHTML = `
-                <div class="modal">
-                    <div class="modal-header">
-                        ${isNew ? '➕ Lisää venttiili' : '✏️ Muokkaa venttiiliä'}
-                    </div>
-                
-                    <div class="modal-content">
-                        <div class="valve-edit-row">
-                
-                            <label>Huone
-                                <input id="valve-room" value="${v.room || ''}">
-                            </label>
-                
-                            <label>Runko
-                                <select id="valve-duct"></select>
-                            </label>
-                
-                            <label>Malli
-                                <select id="valve-model">${modelOptions}</select>
-                            </label>
-                
-                            <label>Koko
-                                <select id="valve-size">
-                                    <option value="">– koko –</option>
-                                </select>
-                            </label>
-                
-                            <label>Avaus
-                                <input id="valve-pos" type="number" step="0.5" value="${v.pos ?? ''}">
-                            </label>
-                
-                            <label>Paine (Pa)
-                                <input id="valve-pa" type="number" value="${v.measuredP ?? ''}">
-                            </label>
-                
-                            <label>K-arvo
-                                <input id="valve-k" type="number" step="0.01" value="${v.kWorking ?? ''}">
-                            </label>
-                
-                            <label>Virtaus (l/s)
-                                <input id="valve-flow" type="number" readonly
-                                       style="background:#f5f5f5;font-weight:bold;">
-                            </label>
-                
-                            <label>Tavoite (l/s)
-                                <input id="valve-target" type="number" step="0.1" value="${v.target ?? ''}">
-                            </label>
-                            <div class="valve-index-row" style="margin-top:8px;">
-    <label>
-        <input type="checkbox" id="valve-is-index">
-        Tee tästä indeksiventtiili
-    </label>
+    <div class="modal">
+        <div class="modal-header">
+            ${isNew ? '➕ Lisää venttiili' : '✏️ Muokkaa venttiiliä'}
+        </div>
+
+        <div class="modal-content">
+            <div class="valve-edit-row">
+
+                <label>Huone
+                    <input id="valve-room" value="${v.room || ''}">
+                </label>
+
+                <label>Runko
+                    <select id="valve-duct"></select>
+                </label>
+
+                <label>Malli
+                    <select id="valve-model">${modelOptions}</select>
+                </label>
+
+                <label>Koko
+                    <select id="valve-size">
+                        <option value="">– koko –</option>
+                    </select>
+                </label>
+
+                <label>Avaus
+                    <input id="valve-pos" type="number" step="0.5" value="${v.pos ?? ''}">
+                </label>
+
+                <label>Paine (Pa)
+                    <input id="valve-pa" type="number" value="${v.measuredP ?? ''}">
+                </label>
+
+                <label>K-arvo
+                    <input id="valve-k" type="number" step="0.01" value="${v.kWorking ?? ''}">
+                </label>
+
+                <label>Virtaus (l/s)
+                    <input id="valve-flow" type="number" readonly
+                           style="background:#f5f5f5;font-weight:bold;">
+                </label>
+
+                <label>Tavoite (l/s)
+                    <input id="valve-target" type="number" step="0.1" value="${v.target ?? ''}">
+                </label>
+
+                <div class="valve-index-row" style="margin-top:8px;">
+                    <label>
+                        <input type="checkbox" id="valve-is-index">
+                        Tee tästä indeksiventtiili
+                    </label>
+                </div>
+
+            </div>
+
+            <!-- 🔎 FALSE-INDEKSI-VAROITUS (vain modaalissa, ei kartassa) -->
+            <div id="valve-false-index-warning">
+    ⚠️ <b>Mahdollinen väärä indeksi</b><br>
+    <span id="valve-false-index-reason"></span>
 </div>
 
-                        </div>
-                    </div>
-                
-                    <div class="modal-actions">
-                        <button class="btn btn-primary" id="saveValveBtn">
-                            💾 ${isNew ? 'Lisää' : 'Tallenna'}
-                        </button>
-                        <button class="btn" onclick="closeValvePanel()">Peruuta</button>
-                    </div>
-                </div>
-                `;
+        </div>
+
+        <div class="modal-actions">
+            <button class="btn btn-primary" id="saveValveBtn">
+                Tallenna
+            </button>
+            <button class="btn" onclick="closeValvePanel()">
+                Peruuta
+            </button>
+        </div>
+    </div>
+`;
+
                 
                     ov.style.display = 'flex';
+                    
                 
                     // ===== ELEMENTIT =====
 const ductEl   = document.getElementById('valve-duct');
@@ -8342,11 +8412,48 @@ const kEl      = document.getElementById('valve-k');
 const flowEl   = document.getElementById('valve-flow');
 const targetEl = document.getElementById('valve-target');
 const indexEl  = document.getElementById('valve-is-index');
+// 🔎 FALSE-INDEKSI-VAROITUKSEN PÄIVITYS (modaalissa)
+const updateFalseIndexWarning = () => {
+    const warningEl = document.getElementById('valve-false-index-warning');
+    if (!warningEl) return;
+
+    const laneAnalysis = window._lastAnalyses?.[v.parentDuctId] || null;
+
+if (
+    v.isIndex === true &&
+    laneAnalysis?.falseIndex &&
+    String(laneAnalysis.falseIndex.id) === String(v.id)
+) {
+    warningEl.style.display = 'block';
+} else {
+    warningEl.style.display = 'none';
+}
+
+};
+
+
+
+
+
 
 // ===== INDEKSICHECKBOX – ESITÄYTTÖ =====
 if (indexEl) {
     indexEl.checked = v.isIndex === true;
 }
+updateFalseIndexWarning();
+// 🔁 Päivitä false-indeksi-varoitus kun käyttäjä vaihtaa indeksiä
+if (indexEl) {
+    indexEl.onchange = () => {
+        updateFalseIndexWarning();
+    };
+    // 🔎 Näytä false-indeksin selite heti modaalin avauksessa,
+// jos analyysi on jo todennut tämän venttiilin false-indeksiksi
+setTimeout(() => {
+    updateFalseIndexWarning();
+}, 0);
+
+}
+
 
                     // ===== MALLI → KOKO (PUUTTUVA OSA) =====
 modelEl.onchange = () => {
@@ -8377,8 +8484,13 @@ if (currentModel) {
                     ductEl.value = v.parentDuctId || '';
                 
                     // ===== 🔴 REAALIAIKAINEN VIRTAUS MODAALISSA =====
-                    const triggerModalFlowUpdate = () => updateValveModalFlow(idx);
-                    posEl.oninput = triggerModalFlowUpdate;
+                    const triggerModalFlowUpdate = () => updateValveModalFlow(isNew ? null : idx);
+
+                    posEl.oninput = () => {
+    triggerModalFlowUpdate();
+    updateFalseIndexWarning();
+};
+
                     paEl.oninput  = triggerModalFlowUpdate;
                     kEl.oninput   = triggerModalFlowUpdate;
                     sizeEl.addEventListener('change', triggerModalFlowUpdate);
@@ -11277,41 +11389,35 @@ let trunkReady = true;
 /* =====================================================
    🔎 FALSE-INDEKSIN TUNNISTUS (VAROITUS, EI AUTOMAATTIA)
    ===================================================== */
+/* =====================================================
+   🔎 FALSE-INDEKSIN TUNNISTUS
+   (VAROITUS KÄYTTÄJÄLLE, EI AUTOMAATTISTA PÄÄTÖSTÄ)
+   ===================================================== */
 let falseIndexReason = null;
 
-// A) Venttiili lähes kiinni → huono indeksi
-if (
-    typeof indexValve.pos === 'number' &&
-    typeof indexValve.minPosition === 'number' &&
-    typeof indexValve.maxPosition === 'number'
-) {
-    const range = indexValve.maxPosition - indexValve.minPosition;
-    if (range > 0) {
-        const openPct = (indexValve.pos - indexValve.minPosition) / range;
-        if (openPct < 0.20) {
-            falseIndexReason = 'Venttiili on lähes kiinni';
-        }
-    }
-}
+// 🔑 YKSINKERTAINEN JA LUOTETTAVA SÄÄNTÖ:
+// Jos indeksiventtiili on selvästi kuristettu suhteessa tavoitteeseen,
+// näytetään varoitus käyttäjälle.
+// (Ei vaadi pos/min/max -tietoja)
 
-// B) Indeksi erittäin heikko suhteessa tavoitteeseen
-if (!falseIndexReason && indexRatio < 0.60) {
-    falseIndexReason = 'Venttiili poikkeaa selvästi muista';
+if (indexRatio < 0.70) {
+    falseIndexReason = 'Indeksiventtiili on voimakkaasti kuristettu eikä välttämättä edusta runkoa luotettavasti';
 }
 
 // 🔁 Varsinainen tasapainotus alkaa tästä
 let allBalanced = true;
 
 
-    /* =====================================================
-       2️⃣A INDEKSISUHDE PER VENTTIILI (VISUAALINEN)
-       ===================================================== */
-    analyzed.forEach(v => {
-        v.indexRatio =
-            indexRatio > 0
-                ? v._ratio / indexRatio
-                : null;
-    });
+/* =====================================================
+   2️⃣A INDEKSISUHDE PER VENTTIILI (VISUAALINEN)
+   ===================================================== */
+analyzed.forEach(v => {
+    v.indexRatio =
+        indexRatio > 0
+            ? v._ratio / indexRatio
+            : null;
+});
+
 
     /* =====================================================
        3️⃣ VENTTIILIKOHTAISET OHJEET + WORKING K
@@ -11396,18 +11502,17 @@ if (v._ratio < 0.90 || v._ratio > 1.10) {
     valves: resultValves,
     machineInstruction,
     indexSuggestion: null,
+falseIndex: falseIndexReason
+    ? {
+        id: String(indexValve.id),
+        reason: falseIndexReason
+    }
+    : null,
 
-    // 🔎 False-indeksi (ennallaan)
-    falseIndex: falseIndexReason
-        ? {
-            id: indexValve.id,
-            reason: falseIndexReason
-        }
-        : null,
 
-    // 🟢 UUSI: runko valmis (±10 % tavoitevirrasta)
     trunkReady
 };
+
 
 
 
