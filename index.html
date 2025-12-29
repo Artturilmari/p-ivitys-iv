@@ -55,10 +55,10 @@
                 <button class="btn btn-secondary" onclick="showRelativeAdjustPanel()" style="width:auto; padding:8px 12px; background-color: #e65100; color: white;">⚖️ Suhteellinen säätö</button>
                 <button class="btn btn-secondary" onclick="showBalance()" style="width:auto; padding:8px 12px;">⚖️ Tasapaino</button>
                 <button class="btn btn-secondary" onclick="optimizeEnergy()" style="width:auto; padding:8px 12px;">⚡ Optimoi</button>
-                <button class="btn btn-secondary" onclick="showReportSupplyExtract()" style="width:auto; padding:8px 12px;">📄 Näytä pöytäkirja: Tulo/Poisto</button>
+<button class="btn btn-secondary" onclick="openReportView()" style="width:auto; padding:8px 12px;">
+    📄 Pöytäkirja
+</button>
                 <button class="btn btn-secondary" onclick="showReportRoof()" style="width:auto; padding:8px 12px;">📄 Näytä pöytäkirja: Huippuimuri</button>
-                <button class="btn btn-secondary" onclick="printReportAHU()" style="width:auto; padding:8px 12px;">🖨️ Tulosta Tulo/Poisto</button>
-                <button class="btn btn-secondary" onclick="printReportRoof()" style="width:auto; padding:8px 12px;">📄 Tulosta Huippuimuri</button>
                     <button class="btn btn-secondary" onclick="(window.showChart?showChart():alert('Kaavion näyttö ei ole vielä käytettävissä'))" style="width:auto; padding:8px 12px;">📈 Näytä kaavio</button>
                 <button class="btn btn-secondary" onclick="showSettings()" style="width:auto; padding:8px 12px;">⚙️ Asetukset</button>
             </div>
@@ -356,7 +356,40 @@
 
     <!-- REPORT VIEW -->
     <div class="view" id="view-report">
-        <div style="padding: 15px;">
+        <<div style="padding:0;">
+
+    <!-- RAPORTIN YLÄPALKKI -->
+    <div id="report-toolbar"
+         style="
+            display:flex;
+            align-items:center;
+            gap:8px;
+            padding:10px 15px;
+            border-bottom:1px solid #ddd;
+            background:#f9f9f9;
+         ">
+
+        <button class="btn btn-secondary"
+                onclick="showView('view-details')">
+            ← Takaisin
+        </button>
+
+        <div style="flex:1;"></div>
+
+        <button class="btn btn-secondary"
+                onclick="exportUnifiedReportToExcel()">
+            📊 Excel
+        </button>
+
+        <!-- VARAUKSET MYÖHEMMIN -->
+        <button class="btn btn-secondary" disabled>📄 PDF</button>
+        <button class="btn btn-secondary" disabled>📤 Lähetä</button>
+
+    </div>
+
+    <!-- RAPORTIN SISÄLTÖ -->
+    <div style="padding:15px;">
+
             <h3>Mittausraportti</h3>
             <img id="reportLogoImg" style="max-height: 50px; max-width: 150px; display: none; margin-bottom: 10px;">
             <div id="reportContent"></div>
@@ -535,11 +568,20 @@
         </div>
     </div>
 </div>
+</div>
 
-
+<button
+    id="projectFab"
+    class="fab"
+    title="Projektit"
+    onclick="openProjectList()"
+>
+    📁
+</button>
     <!-- Poistettu duplikaatti Asunto-modal (aptModal) -->
+     <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+
     <script src="./script.js"></script>
 </body>
 </html>
 <!-- Build: 2025-12-06  | Commit marker: KTS/KSO demo update -->
-</html>

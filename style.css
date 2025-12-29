@@ -42,6 +42,21 @@
 .btn-primary { background: #1976d2; color: #fff; border-color: #1976d2; }
 
 /* Modal styles */
+#valve-modal-overlay {
+    position: fixed;
+    inset: 0;
+    display: none;              /* näytetään JS:llä */
+    align-items: center;
+    justify-content: center;
+    background: rgba(0,0,0,0.45);
+    z-index: 9999;
+}
+.highlight-scroll {
+    outline: 3px solid #ffb300;
+    border-radius: 6px;
+    transition: outline 0.3s ease;
+}
+
 .modal-overlay {
     position: fixed;
     inset: 0;
@@ -2126,5 +2141,259 @@ button:disabled {
     color: #555;
     margin-top: 4px;
 }
+/* ===============================
+   VAIHE 1.1 – RUNGON VISUAALINEN EROTTELU
+   =============================== */
 
-    /* ROOM PANEL END */
+/* Jokainen runko omassa vyöhykkeessä */
+.trunk-block {
+    margin-bottom: 18px;
+    padding: 10px 6px;
+    border-radius: 10px;
+}
+
+/* Vuorotteleva taustasävy */
+.trunk-block.trunk-even {
+    background: rgba(0, 0, 0, 0.03);
+}
+
+.trunk-block.trunk-odd {
+    background: rgba(33, 150, 243, 0.05);
+}
+
+/* Kevyt otsikko rungolle (ei pakollinen sisältö) */
+.trunk-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #444;
+    margin: 0 0 6px 4px;
+}
+.machine-selector {
+    display: flex;
+    gap: 6px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+}
+
+.machine-tab {
+    padding: 4px 10px;
+    font-size: 12px;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+    background: #f5f5f5;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.machine-tab.active {
+    background: #2196F3;
+    color: #fff;
+    border-color: #1976D2;
+}
+
+/* =========================================================
+   RAPORTTI – NÄYTTÖNÄKYMÄ (SCREEN)
+   ========================================================= */
+
+#view-report {
+    background: #eaeaea;
+    padding: 20px;
+}
+
+#reportContent {
+    max-width: 900px;
+    margin: 0 auto;
+}
+
+/* Paperi ruudulla */
+.report-page {
+    background: #fff;
+    box-shadow: 0 0 12px rgba(0,0,0,0.15);
+    padding: 16px 20px;
+    margin-bottom: 24px;
+    font-size: 12px;
+}
+
+/* Otsikko */
+.report-header h1 {
+    text-align: center;
+    font-size: 18px;
+    margin-bottom: 12px;
+}
+
+.report-header .meta {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px 20px;
+    font-size: 12px;
+    margin-bottom: 16px;
+}
+
+/* Taulukko */
+.report-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    background: #fff;
+}
+
+.report-table th {
+    background: #f3f3f3;
+    font-weight: bold;
+    font-size: 12px;
+    border: 1px solid #999;
+    padding: 6px 4px;
+}
+
+.report-table td {
+    border: 1px solid #bbb;
+    padding: 5px 4px;
+    font-size: 12px;
+    text-align: center;
+    white-space: nowrap;
+}
+
+/* Alatiedot */
+.report-footer {
+    margin-top: 16px;
+    padding-top: 8px;
+    border-top: 1px solid #ccc;
+    font-size: 12px;
+    display: flex;
+    justify-content: space-between;
+}
+
+
+/* =========================================================
+   RAPORTTI – PRINT / PDF (A4)
+   ========================================================= */
+
+@media print {
+
+    /* Piilotetaan kaikki muu */
+    body * {
+        visibility: hidden;
+    }
+
+    /* Näytetään vain raportti */
+    #view-report,
+    #view-report * {
+        visibility: visible;
+    }
+
+    /* Piilotetaan työkalut */
+    #report-toolbar {
+        display: none !important;
+    }
+
+    /* A4-asettelu */
+    #view-report {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        background: #fff;
+        padding: 0;
+    }
+
+    #reportContent {
+        padding: 20mm;
+        font-size: 10px;
+        color: #000;
+    }
+
+    /* Paperi */
+    .report-page {
+        width: 210mm;
+        min-height: 297mm;
+        padding: 10mm 12mm;
+        page-break-after: always;
+        box-shadow: none;
+    }
+
+    /* Otsikko */
+    .report-header h1 {
+        font-size: 14px;
+        margin: 0 0 4mm 0;
+        text-align: center;
+    }
+
+    .report-header .meta {
+        font-size: 10px;
+        margin-bottom: 4mm;
+    }
+
+    /* Taulukko */
+    .report-table {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+    }
+
+    .report-table th,
+    .report-table td {
+        border: 1px solid #000;
+        padding: 2mm 1mm;
+        font-size: 10px;
+        text-align: center;
+        white-space: nowrap;
+    }
+
+    .report-table th {
+        background: #f2f2f2;
+        font-weight: bold;
+    }
+
+    /* Sarakeleveydet */
+    .report-table th:nth-child(1),
+    .report-table td:nth-child(1) { width: 18mm; }
+
+    .report-table th:nth-child(2),
+    .report-table td:nth-child(2) { width: 22mm; }
+
+    .report-table th:nth-child(3),
+    .report-table td:nth-child(3) { width: 10mm; }
+
+    .report-table th:nth-child(4),
+    .report-table td:nth-child(4) { width: 10mm; }
+
+    .report-table th:nth-child(5),
+    .report-table td:nth-child(5) { width: 10mm; }
+
+    .report-table th:nth-child(6),
+    .report-table td:nth-child(6) { width: 12mm; }
+
+    .report-table th:nth-child(7),
+    .report-table td:nth-child(7) { width: 14mm; }
+
+    .report-table th:nth-child(8),
+    .report-table td:nth-child(8) { width: 18mm; }
+
+    .report-table th:nth-child(9),
+    .report-table td:nth-child(9) { width: 22mm; }
+
+    .report-table th:nth-child(10),
+    .report-table td:nth-child(10) { width: 10mm; }
+
+    .report-table th:nth-child(11),
+    .report-table td:nth-child(11) { width: 10mm; }
+
+    .report-table th:nth-child(12),
+    .report-table td:nth-child(12) { width: 10mm; }
+
+    .report-table th:nth-child(13),
+    .report-table td:nth-child(13) { width: 12mm; }
+
+    .report-table th:nth-child(14),
+    .report-table td:nth-child(14) { width: 14mm; }
+
+    /* Alatiedot */
+    .report-footer {
+        margin-top: 6mm;
+        padding-top: 2mm;
+        border-top: 1px solid #000;
+        font-size: 10px;
+        display: flex;
+        justify-content: space-between;
+    }
+}
