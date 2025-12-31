@@ -628,7 +628,19 @@ table.report th { background: #f0f0f0; }
         grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
         gap: 15px;
     }
-    
+    .mini-grid-header {
+    display:grid;
+    grid-template-columns: 1.4fr 0.9fr 0.7fr 0.7fr 0.7fr 0.7fr 0.6fr 0.6fr 0.5fr;
+    gap:8px;
+    align-items:center;
+    font-size:11px;
+    font-weight:800;
+    color:#555;
+    text-transform:uppercase;
+    letter-spacing:0.02em;
+    padding:0 8px 4px 8px;
+}
+
     /* VENTTIILIKORTTI */
     .valve-card {
         background: #fff;
@@ -1098,9 +1110,6 @@ table.report th { background: #f0f0f0; }
     .valve-card.locked {
         opacity: 0.7;
     }
-    .pct-ok { background:#e8f5e9; }
-    .pct-warn { background:#fff8e1; }
-    .pct-bad { background:#fdecea; }
     
     @media print {
         .pct-ok, .pct-warn, .pct-bad {
@@ -2396,4 +2405,346 @@ button:disabled {
         display: flex;
         justify-content: space-between;
     }
+}
+.pct { font-weight: bold; }
+.pct-na   { color: #666; }
+.pct-ok   { color: #1a7f37; }   /* vihreä */
+.pct-warn { color: #b58100; }   /* keltainen */
+.pct-bad  { color: #b42318; }   /* punainen */
+
+/* ===== RAPORTIN PROSENTTIVÄRIT ===== */
+
+.pct {
+    font-weight: bold;
+    text-align: center;
+}
+
+
+
+.pct-none {
+    color: #777;
+    background: #f5f5f5;
+}
+/* =====================================================
+   MITTALISTA V2 – EXCEL-TYYLINEN ETUSIVU
+   ===================================================== */
+
+.measurelist-v2 {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+/* Rungon otsikko */
+.duct-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 8px;
+    font-size: 12px;
+    font-weight: 700;
+    background: #f3f5f7;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+}
+
+.duct-header .duct-type {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    color: #555;
+}
+
+.duct-status {
+    font-size: 11px;
+    font-weight: 800;
+    padding: 2px 6px;
+    border-radius: 10px;
+}
+
+/* Taulukko */
+.measure-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    font-size: 12px;
+    background: #fff;
+}
+
+.measure-table th {
+    background: #fafafa;
+    border-bottom: 1px solid #ccc;
+    padding: 4px 2px;
+    font-size: 11px;
+    font-weight: 800;
+    text-transform: uppercase;
+    color: #555;
+}
+
+.measure-table td {
+    border-bottom: 1px solid #eee;
+    padding: 2px 2px;
+    text-align: center;
+    vertical-align: middle;
+}
+
+/* Rivikorkeus tiiviiksi */
+.measure-table tr {
+    height: 26px;
+}
+
+
+
+
+.measure-table input:focus {
+    border-color: #2196F3;
+    background: #fff;
+    outline: none;
+}
+
+/* K-arvo korostettuna */
+.measure-table td .k-input,
+.measure-table td input[data-k="true"] {
+    font-weight: 800;
+    width: 70px;
+}
+
+/* Päätelaite */
+.measure-table .valve-type,
+.measure-table td input[data-f="type"] {
+    font-weight: 800;
+    text-transform: uppercase;
+}
+
+/* Toiminnot */
+.measure-table .row-actions {
+    display: flex;
+    gap: 4px;
+    justify-content: center;
+    align-items: center;
+}
+
+/* Skrollaus pitkälle listalle */
+#measurementList {
+    max-height: 65vh;
+    overflow-y: auto;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+}
+/* Venttiilirivi neutraaliksi */
+.measure-table tr {
+    background:#fff;
+}
+
+.measure-table tr:hover {
+    background:#f6f6f6;
+}
+
+/* Päätelaite EI hälytysväri */
+.measure-table .valve-type,
+.measure-table td input[data-f="type"] {
+    color:#222;
+    font-weight:600;
+}
+
+/* % ilman väriä */
+.measure-table .pct-cell {
+    color:#222;
+    font-weight:600;
+}
+.status-dot {
+    width:10px;
+    height:10px;
+    border-radius:50%;
+    display:inline-block;
+    margin:auto;
+}
+
+.status-ok { background:#2ecc71; }
+.status-warn { background:#f1c40f; }
+.status-bad { background:#e74c3c; }
+/* Huone tärkein */
+.measure-table td.huone input {
+    font-weight:600;
+    font-size:13px;
+}
+
+/* Mitattu / Suunn keskitaso */
+.measure-table td.flow input {
+    font-weight:500;
+}
+
+/* Säätöarvot kevyemmät */
+.measure-table td.meta input {
+    color:#555;
+    font-size:12px;
+}
+/* ================================
+   MITTALISTAN TILAPALLO
+   ================================ */
+
+.status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+    margin: auto;
+}
+
+.status-ok {
+    background-color: #2ecc71; /* vihreä */
+}
+
+.status-warn {
+    background-color: #f1c40f; /* keltainen */
+}
+
+.status-bad {
+    background-color: #e74c3c; /* punainen */
+}
+
+/* Ensimmäinen sarake kapeaksi */
+.measure-table th.status-col,
+.measure-table td.status-col {
+    width: 22px;
+    padding: 0;
+    text-align: center;
+}
+/* Mittalistan klikattavuus */
+.measure-table input,
+.measure-table td {
+    cursor: pointer;
+}
+
+.measure-table input:focus {
+    cursor: text;
+}
+/* Rivin tausta klikattava */
+.measure-table tr.valve-row {
+    cursor: pointer;
+}
+
+/* Inputissa normaali tekstikursori */
+.measure-table input {
+    cursor: text;
+}
+
+.measure-table button {
+    cursor: pointer;
+}
+.measurement-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 12px;
+    background: #fff;
+}
+
+.measurement-table th,
+.measurement-table td {
+    border: 1px solid #ddd;
+    padding: 6px;
+    font-size: 13px;
+}
+
+.measurement-table th {
+    background: #f0f0f0;
+    font-weight: 600;
+}
+
+.measurement-table input {
+    width: 100%;
+    border: none;
+    padding: 4px;
+    font-size: 13px;
+}
+
+.measurement-table tr.empty-row {
+    background: #fafafa;
+}
+
+.measurement-table tr.filled-row {
+    background: #ffffff;
+}
+.measure-input-table {
+  width:100%;
+  border-collapse:collapse;
+  background:#fff;
+  margin-bottom:16px;
+}
+.measure-input-table th,
+.measure-input-table td {
+  border:1px solid #ddd;
+  padding:6px;
+  font-size:13px;
+}
+.measure-input-table th { background:#f0f0f0; }
+.measure-input-table input {
+  width:100%;
+  border:none;
+  padding:4px;
+  font-size:13px;
+}
+.measure-input-table tr.empty-row { background:#fafafa; }
+.measure-input-table tr.filled-row { background:#fff; }
+.measure-input-block { margin-bottom:16px; }
+.draft-row {
+    background:#fafafa;
+}
+.draft-row input {
+    color:#999;
+}
+.draft-row input:focus {
+    color:#000;
+}
+/* ================================
+   COMPACT EXCEL-STYLE MITTALISTA
+   ================================ */
+
+.measure-table {
+    font-size: 12px;
+}
+
+.measure-table th {
+    padding: 4px 4px;
+    font-size: 11px;
+}
+
+.measure-table td {
+    padding: 2px 4px;
+}
+
+.measure-table input {
+    padding: 4px 6px;
+    font-size: 12px;
+}
+
+.valve-row {
+    height: 34px;
+}
+
+.measurelist-v2 {
+    max-height: 420px;        /* 👈 EI valtaa koko sivua */
+    overflow-y: auto;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+}
+
+/* ================================
+   STICKY HEADER
+   ================================ */
+.measure-table thead th {
+    position: sticky;
+    top: 0;
+    background: #f9f9f9;
+    z-index: 5;
+}
+
+/* ================================
+   STICKY RUNKO
+   ================================ */
+.duct-header {
+    position: sticky;
+    top: 32px; /* otsikkorivin korkeus */
+    z-index: 4;
+    background: #fff;
 }
