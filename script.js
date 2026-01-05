@@ -1,49 +1,276 @@
 
 // Turvallinen kaavion näyttö -nappi: kutsuu showChart jos olemassa
-function showChartFallback() {
-    if (window.showChart && typeof window.showChart === 'function') {
-        try { window.showChart(); } catch (e) { alert('Kaavion avaaminen epäonnistui: ' + e.message); }
-    } else {
-        alert('Kaavion näyttö ei ole vielä käytettävissä.');
-    }
-}
-let projects = JSON.parse(localStorage.getItem('iv_projects')) || [];
+/* =====================================================
+   IV-MASTER PRO — CORE (Yksi totuus)
+   - Pilotissa localStorage
+   - Projektit = keskeneräiset työt (ei arkisto)
+   - UI-tila erillään laskentadatasta
+   ===================================================== */
 
+const STORAGE_KEY = 'iv_projects';
+
+// -----------------------
+// YKSI TOTUUS (GLOBAL)
+// -----------------------
+let projects = [];
 let activeProjectId = null;
 
-let editingValveIndex = null;
+// Mode = home/away/boost
+window.currentMode = window.currentMode || 'home';
 
-let returnToVisual = false;
+// UI-tila (konevalinta, myöhemmin zoom/scroll yms.)
+window.uiState = window.uiState || {
+    activeMachineId: null,
+    indexLocked: false,
+    indexValveId: null
+};
 
-let preSelectedDuctId = null;
+// -----------------------
+// HELPERS
+// -----------------------
+function safeJsonParse(raw, fallback) {
+    try { return raw ? JSON.parse(raw) : fallback; }
+    catch { return fallback; }
+}
 
-let currentPhotoData = null;
+function genId(prefix = 'ID') {
+    // crypto.randomUUID jos saatavilla, muuten fallback
+    try {
+        if (crypto?.randomUUID) return crypto.randomUUID();
+    } catch {}
+    return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
 
-let editingMachineIndex = null;
+// -----------------------
+// STORAGE
+// -----------------------
+function loadData() {
+    projects = safeJsonParse(localStorage.getItem(STORAGE_KEY), []);
+    if (!Array.isArray(projects)) projects = [];
 
-let editingDuctId = null;
+    // Palauta viimeisin aktiivinen projekti jos tallennettu
+    const last = localStorage.getItem('iv_active_project_id');
+    if (last && projects.some(p => String(p.id) === String(last))) {
+        activeProjectId = last;
+    } else {
+        activeProjectId = projects[0]?.id || null;
+    }
 
-let currentMode = 'home';
-let activeApartmentId = null; // For per-apartment AHU viewing
+    // Varmista perusrakenne ettei renderit kaadu
+    projects.forEach(normalizeProject);
+}
 
-let signaturePad = null; // Canvas context
+function saveData() {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(projects));
+    if (activeProjectId != null) {
+        localStorage.setItem('iv_active_project_id', String(activeProjectId));
+    }
+}
+
+// -----------------------
+// NORMALISOINTI (ei migraatiota, vain turvallisuus)
+// -----------------------
+function normalizeProject(p) {
+    if (!p || typeof p !== 'object') return;
+
+    if (!p.id) p.id = genId('P');
+    if (!p.name) p.name = 'Nimetön projekti';
+
+    // Meta / asetukset
+    if (!p.meta) p.meta = {};
+
+    // K-kirjasto projektissa (jos käytössä)
+    if (!p.kLibrary) p.kLibrary = {};
+
+    // Koneet
+    if (!Array.isArray(p.machines)) p.machines = [];
+
+    // Vanhat toteutukset käyttää eri paikkoja:
+    // - osa käyttää p.modes[mode] (legacy)
+    // - osa käyttää konekohtaisesti machine.modes[mode]
+    // Tässä EI muuteta rakennetta, vain varmistetaan ettei mikään ole undefined.
+    if (!p.modes || typeof p.modes !== 'object') {
+        p.modes = { home: { machines: [], ducts: [], valves: [] } };
+    }
+    if (!p.modes.home)  p.modes.home  = { machines: [], ducts: [], valves: [] };
+    if (!p.modes.away)  p.modes.away  = { machines: [], ducts: [], valves: [] };
+    if (!p.modes.boost) p.modes.boost = { machines: [], ducts: [], valves: [] };
+
+    // UI-tila projektin sisään (konekohtainen säilytys myöhemmin laajennettavissa)
+    if (!p.uiState || typeof p.uiState !== 'object') p.uiState = {};
+}
+function confirmCreateProject() {
+    console.log('confirmCreateProject called');
+
+    const nameEl = document.getElementById('newProjName');
+    const typeEl = document.getElementById('newProjType');
+
+    if (!nameEl || !typeEl) {
+        alert('Projektin luonti epäonnistui: kenttiä ei löydy');
+        return;
+    }
+
+    const name = nameEl.value.trim();
+    const systemType = typeEl.value;
+
+    if (!name) {
+        alert('Anna kohteen nimi');
+        return;
+    }
+
+    // 🔑 varmista appState
+    if (!window.appState) window.appState = {};
+    if (!Array.isArray(window.appState.projects)) {
+        window.appState.projects = [];
+    }
+
+    // 🔥 LUODAAN PROJEKTI
+    const projectId = window.createProject({ name, systemType });
+
+    console.log('✅ Projekti luotu:', projectId);
+
+    closeModal();
+
+    // 🔑 AVAA PROJEKTI SUORAAN OIKEAAN NÄKYMÄÄN
+    activateProject(projectId, 'home');
+}
+
+
+function loadProjectsFromStorage() {
+    try {
+        const raw = localStorage.getItem('iv_projects');
+        if (!raw) {
+            window.appState.projects = [];
+            return;
+        }
+
+        const parsed = JSON.parse(raw);
+        window.appState.projects = Array.isArray(parsed) ? parsed : [];
+
+        console.log('📦 Projektit ladattu:', window.appState.projects.length);
+    } catch (e) {
+        console.error('❌ Projektien lataus epäonnistui', e);
+        window.appState.projects = [];
+    }
+}
+
+
+// -----------------------
+// UI STATE (projektiin sidottuna, mutta ei laskentaa)
+// -----------------------
+function ensureUiState() {
+    const p = projects.find(x => String(x.id) === String(activeProjectId));
+    if (!p) return;
+
+    if (!p.uiState || typeof p.uiState !== 'object') p.uiState = {};
+
+    // Jos projektilla ei ole aktiivista konetta, mutta koneita on -> valitse eka
+    if (!p.uiState.activeMachineId && Array.isArray(p.machines) && p.machines.length) {
+        p.uiState.activeMachineId = p.machines[0].id;
+    }
+
+    // Heijasta projektin uiState globaaliksi (että nykykoodi toimii)
+    window.uiState = { ...window.uiState, ...p.uiState };
+}
+
+function persistUiStateToProject() {
+    const p = projects.find(x => String(x.id) === String(activeProjectId));
+    if (!p) return;
+    if (!p.uiState || typeof p.uiState !== 'object') p.uiState = {};
+
+    p.uiState = { ...p.uiState, ...window.uiState };
+    saveData();
+}
+
+// -----------------------
+// KÄYNNISTYS
+// -----------------------
+loadData();
+ensureUiState();
+
+
+// ---------- VIEW API ----------
+// ---------- VIEW API ----------
+function showView(viewId) {
+    // ✅ pidä molemmat state-maailmat samassa
+    window.appState = window.appState || {};
+    window.uiState  = window.uiState  || {};
+
+    window.appState.currentView = viewId;
+    window.uiState.currentView  = viewId;
+
+    document.querySelectorAll('.view').forEach(v => {
+        v.classList.remove('active');
+        v.style.display = 'none';
+    });
+
+    const target = document.getElementById(viewId);
+    if (target) {
+        target.classList.add('active');
+        target.style.display = 'block';
+    }
+
+    // jos sinulla on FAB-logiikka, se saa nyt oikean viewn
+    if (typeof updateFabVisibility === 'function') {
+        try { updateFabVisibility(); } catch (e) {}
+    }
+}
 
 // ===============================
-// 🔐 GLOBAALIT – AINA ENSIN
+// PROJEKTIN LUONTI (PUHDAS)
 // ===============================
-let valveGroups = {};
-let valveIdToModelId = {};
+window.createProject = function ({ name, systemType }) {
+    const project = {
+        id: 'p_' + Date.now(),
+        name,
+        systemType,
+        machines: [
+            {
+                id: 'TK01',
+                name: 'TK01',
+                modes: {
+                    home:  { ducts: [], valves: [] },
+                    away:  { ducts: [], valves: [] },
+                    boost: { ducts: [], valves: [] }
+                }
+            }
+        ],
+        createdAt: Date.now()
+    };
+
+    // CORE v1
+    window.appState.projects.push(project);
+    localStorage.setItem('iv_projects', JSON.stringify(window.appState.projects));
+
+    return project.id;
+};
 
 
-projects.forEach(p => {
 
-if (!p.machines) p.machines = []; if (!p.ducts) p.ducts = []; if (!p.valves) p.valves = [];
+// ---------- MODALS ----------
+function openNewProjectModal() {
+    const modal = document.getElementById('newProjectModal');
+    if (!modal) {
+        alert('Projektimodaalia ei löydy');
+        return;
+    }
+    modal.style.display = 'flex';
+}
 
-if (!p.meta) p.meta = {};
 
-if (!p.modes) { p.modes = { home: { machines: JSON.parse(JSON.stringify(p.machines)), valves: JSON.parse(JSON.stringify(p.valves)) }, away: { machines: [], valves: [] }, boost: { machines: [], valves: [] } }; }
 
-});
+// ---------- UI HOOKS ----------
+
+// ---------- INIT ----------
+loadData();
+ensureUiState();
+showView('view-projects');
+
+console.log('🧱 CORE v1 loaded');
+
+
+
+
 window.uiState = window.uiState || {};
 
 // olemassa olevat
@@ -85,254 +312,179 @@ document.addEventListener('click', function (e) {
 const USER_KLIB_STORAGE_KEY = 'userKLibrary_v1';
 
 // pidetään kirjastodata muistissa
-window.userKLibrary = window.userKLibrary || {};
 
 // ===============================
 // K-KIRJASTO (käyttäjäkohtainen)
 // ===============================
-function loadUserKLibrary() {
-    const EMPTY_KLIB = {
-        supply: [],
-        extract: [],
-        damper: [],
-        other: []
-    };
 
-    try {
-        const raw = localStorage.getItem(USER_KLIB_STORAGE_KEY);
-        if (!raw) {
-            window.userKLibrary = { ...EMPTY_KLIB };
-            return window.userKLibrary;
-        }
+/* ===============================
+   K-LIBRARY v2 (ADMIN)
+   - ei jaeta valmistaja-K:ta mukana
+   - käyttäjä lisää / tuo itse
+   - duplikaatit estetään (B-malli: varoitus + auto-hyväksyntä)
+   =============================== */
 
-        const parsed = JSON.parse(raw);
-        if (!parsed || typeof parsed !== 'object') {
-            window.userKLibrary = { ...EMPTY_KLIB };
-            return window.userKLibrary;
-        }
+const KLIB_STORAGE_KEY = 'iv_userKLibrary_v2';
 
-        // Lukitaan rakenne, mutta säilytetään data
-        window.userKLibrary = {
-            supply: Array.isArray(parsed.supply) ? parsed.supply : [],
-            extract: Array.isArray(parsed.extract) ? parsed.extract : [],
-            damper: Array.isArray(parsed.damper) ? parsed.damper : [],
-            other: Array.isArray(parsed.other) ? parsed.other : []
-        };
+// Yksi totuus:
+window.userKLibraryV2 = window.userKLibraryV2 || {
+  entries: [],     // lista
+  index: {}        // key -> entryId (nopea haku, estää duplikaatit)
+};
 
-        return window.userKLibrary;
-    } catch (e) {
-        console.warn('loadUserKLibrary failed, resetting library', e);
-        window.userKLibrary = { ...EMPTY_KLIB };
-        return window.userKLibrary;
+// key: kind|model|size|variant|pos
+function klibMakeKey({ kind, model, size, variant, pos }) {
+  const k = (kind || 'other').toLowerCase().trim();
+  const m = (model || '').trim();
+  const s = (size || '').toString().trim();
+  const v = (variant || '').trim();
+  const p = Number(pos);
+  return `${k}|${m}|${s}|${v}|${isFinite(p) ? p : ''}`;
+}
+
+function klibSave() {
+  try {
+    localStorage.setItem(KLIB_STORAGE_KEY, JSON.stringify(window.userKLibraryV2));
+  } catch (e) {
+    console.warn('KLIB save failed:', e);
+  }
+}
+
+function klibLoad() {
+  try {
+    const raw = localStorage.getItem(KLIB_STORAGE_KEY);
+    if (!raw) return false;
+    const obj = JSON.parse(raw);
+    if (!obj || !Array.isArray(obj.entries)) return false;
+
+    // varmistetaan index
+    obj.index = obj.index && typeof obj.index === 'object' ? obj.index : {};
+    window.userKLibraryV2 = obj;
+
+    // jos index puuttuu / rikki → rakennetaan uudelleen
+    if (!window.userKLibraryV2.index || Object.keys(window.userKLibraryV2.index).length === 0) {
+      klibRebuildIndex();
+      klibSave();
     }
+    return true;
+  } catch (e) {
+    console.warn('KLIB load failed:', e);
+    return false;
+  }
+}
+
+function klibRebuildIndex() {
+  const idx = {};
+  (window.userKLibraryV2.entries || []).forEach(ent => {
+    const key = klibMakeKey(ent);
+    // jos duplikaatti löytyy jo indexistä, pidetään viimeisin (createdAt) ja varoitetaan
+    if (idx[key]) {
+      const prevId = idx[key];
+      const prev = window.userKLibraryV2.entries.find(x => x.id === prevId);
+      const a = prev?.createdAt || 0;
+      const b = ent?.createdAt || 0;
+      if (b >= a) idx[key] = ent.id;
+    } else {
+      idx[key] = ent.id;
+    }
+  });
+  window.userKLibraryV2.index = idx;
+}
+
+// B-malli: jos sama key löytyy → varoita + korvaa vanha automaattisesti
+function klibUpsertEntry(entry, { warn = true } = {}) {
+  if (!entry) return null;
+
+  // normalisointi
+  entry.kind = (entry.kind || 'other').toLowerCase().trim();
+  entry.model = (entry.model || '').trim();
+  entry.size = (entry.size || '').toString().trim();
+  entry.variant = (entry.variant || '').trim();
+  entry.pos = Number(entry.pos);
+  entry.k = Number(entry.k);
+
+  if (!entry.model || !isFinite(entry.pos) || !isFinite(entry.k)) {
+    console.warn('KLIB upsert: puuttuvat kentät', entry);
+    return null;
+  }
+
+  const key = klibMakeKey(entry);
+  const existingId = window.userKLibraryV2.index[key];
+
+  if (!entry.id) entry.id = 'k_' + Date.now() + '_' + Math.random().toString(16).slice(2);
+  entry.createdAt = entry.createdAt || Date.now();
+  entry.updatedAt = Date.now();
+  entry.approved = true; // B: automaattisesti hyväksytty (admin)
+
+  if (existingId) {
+    const old = window.userKLibraryV2.entries.find(x => x.id === existingId);
+    if (warn) {
+      console.warn('⚠️ KLIB: sama venttiili+variant+asento löytyi, korvataan:', { key, old, entry });
+      // tähän voi myöhemmin UI-varoituksen (toast/modal)
+    }
+
+    // korvaa vanha: poistetaan vanha entry listasta ja asetetaan uusi tilalle
+    window.userKLibraryV2.entries = window.userKLibraryV2.entries.filter(x => x.id !== existingId);
+  }
+
+  window.userKLibraryV2.entries.push(entry);
+  window.userKLibraryV2.index[key] = entry.id;
+
+  klibSave();
+  return entry.id;
+}
+
+function klibFindK({ kind, model, size, variant, pos }) {
+  const key = klibMakeKey({ kind, model, size, variant, pos });
+  const id = window.userKLibraryV2.index[key];
+  if (!id) return null;
+  return window.userKLibraryV2.entries.find(x => x.id === id) || null;
+}
+
+// Pilotin kannalta tärkeä: resolve palauttaa yhden K:n varmasti
+function klibResolveK({ kind, model, size, variant, pos }) {
+  const ent = klibFindK({ kind, model, size, variant, pos });
+  return ent && isFinite(ent.k) ? ent.k : null;
+}
+function klibFindEntries(filter = {}) {
+  return (window.userKLibraryV2.entries || []).filter(e => {
+    return Object.entries(filter).every(([k, v]) => e[k] === v);
+  });
+}
+function klibUpdateEntry(id, patch = {}) {
+  const lib = window.userKLibraryV2;
+  const e = lib.entries.find(x => x.id === id);
+  if (!e) return false;
+
+  Object.assign(e, patch, {
+    updatedAt: Date.now()
+  });
+
+  klibSave();
+  return true;
+}
+function klibDeleteEntry(id) {
+  const lib = window.userKLibraryV2;
+  const e = lib.entries.find(x => x.id === id);
+  if (!e) return false;
+
+  const key = klibMakeKey(e);
+
+  lib.entries = lib.entries.filter(x => x.id !== id);
+  delete lib.index[key];
+
+  klibSave();
+  return true;
 }
 
 // ===============================
 // Tallenna K-kirjasto
 // ===============================
-function saveUserKLibrary() {
-    try {
-        if (!window.userKLibrary || typeof window.userKLibrary !== 'object') {
-            console.warn('saveUserKLibrary: invalid library, abort');
-            return;
-        }
-        localStorage.setItem(
-            USER_KLIB_STORAGE_KEY,
-            JSON.stringify(window.userKLibrary)
-        );
-    } catch (e) {
-        console.warn('saveUserKLibrary failed', e);
-    }
-}
-function saveToUserKLibrary({
-    flowType,        // 'supply' | 'extract'
-    manufacturer,
-    model,
-    size,
-    opening,
-    k
-}) {
-    if (!flowType || !model || !size || !isFinite(opening) || !isFinite(k)) {
-        console.warn('K-kirjaston tallennus: puutteelliset tiedot');
-        return false;
-    }
 
-    if (!window.userKLibrary) window.userKLibrary = {};
-    if (!window.userKLibrary[flowType]) window.userKLibrary[flowType] = {};
 
-    const valveId = buildValveId({ manufacturer, model, size });
 
-    if (!window.userKLibrary[flowType][valveId]) {
-        window.userKLibrary[flowType][valveId] = {
-            valveId,
-            displayName: buildValveDisplayName({ manufacturer, model, size }),
-            manufacturer,
-            model,
-            size: Number(size),
-            entries: []
-        };
-    }
 
-    const entries = window.userKLibrary[flowType][valveId].entries;
 
-    // Estä tuplarivi samalla avauksella
-    const exists = entries.find(e => Number(e.opening) === Number(opening));
-    if (exists) {
-        exists.k = Number(k); // päivitä
-    } else {
-        entries.push({
-            opening: Number(opening),
-            k: Number(k)
-        });
-    }
-
-    // Järjestä avauksen mukaan
-    entries.sort((a, b) => a.opening - b.opening);
-
-    saveUserKLibrary();
-    return true;
-}
-function migrateUserKLibraryIfNeeded() {
-    const lib = window.userKLibrary;
-    if (!lib) return;
-
-    ['supply', 'extract'].forEach(flowType => {
-        const old = lib[flowType];
-        if (!old || Array.isArray(old)) return;
-
-        const migrated = {};
-
-        Object.values(old).forEach(item => {
-            // jos jo uudessa muodossa → ok
-            if (item.valveId && item.entries) {
-                migrated[item.valveId] = item;
-                return;
-            }
-
-            // yritä rakentaa uusi rakenne vanhasta
-            const valveId = buildValveId({
-                manufacturer: item.manufacturer || '',
-                model: item.model || item.note || '',
-                size: item.size || item.opening || ''
-            });
-
-            if (!migrated[valveId]) {
-                migrated[valveId] = {
-                    valveId,
-                    displayName: item.displayName || valveId,
-                    manufacturer: item.manufacturer || '',
-                    model: item.model || '',
-                    size: Number(item.size) || null,
-                    entries: []
-                };
-            }
-
-            if (item.opening && item.k) {
-                migrated[valveId].entries.push({
-                    opening: Number(item.opening),
-                    k: Number(item.k)
-                });
-            }
-        });
-
-        lib[flowType] = migrated;
-    });
-
-    saveUserKLibrary();
-}
-
-function saveCurrentKToLibrary() {
-    if (!window.userKLibrary) {
-        loadUserKLibrary();
-    }
-
-    const valveType = document.getElementById('valveType')?.value;
-    const type =
-        valveType === 'supply' ? 'supply' :
-        valveType === 'extract' ? 'extract' :
-        'other';
-
-    const k = Number(document.getElementById('manualK')?.value);
-    const opening = Number(document.getElementById('valveSizeSelect')?.value);
-
-    const modelText = String(
-        document.getElementById('valveModelSelect')
-            ?.selectedOptions?.[0]?.textContent || ''
-    ).trim();
-
-    const model = modelText || '—';
-    const size = opening;
-
-    if (!opening || opening <= 0) {
-        alert('Valitse venttiilin koko');
-        return;
-    }
-    if (!k || k <= 0) {
-        alert('Anna manuaalinen K-arvo');
-        return;
-    }
-
-    if (!Array.isArray(window.userKLibrary[type])) {
-        window.userKLibrary[type] = [];
-    }
-
-    const normModel = model.toUpperCase();
-    let updated = false;
-
-    window.userKLibrary[type] = window.userKLibrary[type].map(r => {
-        const rNormModel = String(r.model || '').trim().toUpperCase();
-        if (
-            rNormModel === normModel &&
-            Number(r.size) === Number(size) &&
-            Number(r.opening) === Number(opening)
-        ) {
-            updated = true;
-            return { ...r, k, note: model };
-        }
-        return r;
-    });
-
-    if (!updated) {
-        window.userKLibrary[type].push({
-            model,
-            size,
-            opening,
-            k,
-            note: model
-        });
-    }
-
-    saveData?.();
-
-    // 🔁 TÄRKEIN KOHTA
-    const activeType = window.uiState.activeKLibraryType || type;
-    if (typeof renderKCategoryGroupedList === 'function') {
-        renderKCategoryGroupedList(activeType);
-    }
-
-    alert(updated
-        ? 'K-arvo päivitetty'
-        : 'K-arvo lisätty'
-    );
-    refreshOpenKValveModal(type, model, size);
-
-}
-
-function deleteKEntry(type, idx) {
-    ensureUserKLibraryReady();
-    if (!window.userKLibrary[type]?.[idx]) return;
-
-    if (!confirm('Poistetaanko tämä K-arvo?')) return;
-
-    window.userKLibrary[type].splice(idx, 1);
-    saveData?.();
-
-    const activeType = window.uiState.activeKLibraryType || type;
-    closeKValveDetailModal();
-    renderKCategoryGroupedList(activeType);
-    refreshOpenKValveModal(type, r.model, r.size);
-
-}
 
 
 function applyKFromLibraryToActiveValve(opening, k) {
@@ -384,50 +536,8 @@ function getSelectedFlowTypeFromDuct() {
     return duct?.type || null; // 'supply' | 'extract'
 }
 
-function saveCurrentValveToKLibrary() {
-    const kValue = parseFloat(document.getElementById('valveK')?.value);
-    if (!kValue) {
-        alert('Anna K-arvo');
-        return;
-    }
 
-    // päätellään luokka venttiilityypistä
-    const type = document.getElementById('valveType')?.value || 'other';
 
-    const entry = {
-        name: document.getElementById('valveModel')?.value || 'Nimetön',
-        k: kValue
-    };
-
-    if (!window.userKLibrary[type]) {
-        window.userKLibrary[type] = [];
-    }
-
-    window.userKLibrary[type].push(entry);
-    saveUserKLibrary();
-
-    alert('Tallennettu K-kirjastoon');
-}
-function openUserKLibraryForValve() {
-    const type = document.getElementById('valveType')?.value || 'other';
-    const list = window.userKLibrary[type] || [];
-
-    if (list.length === 0) {
-        alert('Ei tallennettuja K-arvoja tässä luokassa');
-        return;
-    }
-
-    let msg = 'Valitse K-arvo:\n\n';
-    list.forEach((e, i) => {
-        msg += `${i + 1}. ${e.name} (K=${e.k})\n`;
-    });
-
-    const sel = prompt(msg);
-    const idx = parseInt(sel, 10) - 1;
-    if (!list[idx]) return;
-
-    document.getElementById('valveK').value = list[idx].k;
-}
 function getActiveValvesForMap(project) {
     if (!project) return [];
 
@@ -463,22 +573,7 @@ function escapeJsString(s) {
 }
 
 // Varmista että kirjasto on ladattu
-function ensureUserKLibraryReady() {
-    const EMPTY = { supply: [], extract: [], damper: [], other: [] };
 
-    if (!window.userKLibrary || typeof window.userKLibrary !== 'object') {
-        window.userKLibrary = { ...EMPTY };
-        return window.userKLibrary;
-    }
-
-    // jos rakenne puuttuu, korjaa
-    if (!Array.isArray(window.userKLibrary.supply)) window.userKLibrary.supply = [];
-    if (!Array.isArray(window.userKLibrary.extract)) window.userKLibrary.extract = [];
-    if (!Array.isArray(window.userKLibrary.damper)) window.userKLibrary.damper = [];
-    if (!Array.isArray(window.userKLibrary.other)) window.userKLibrary.other = [];
-
-    return window.userKLibrary;
-}
 
 // 🔓 Päivittää K-kirjaston hakunapin tilan venttiilimodaalissa
 function updateKLibraryButtonState() {
@@ -542,128 +637,53 @@ function normalizeKValue(k) {
     const n = parseFloat(k);
     return Number.isFinite(n) ? n : null;
 }
-// 📚 Avaa K-kirjaston haku venttiilimodaaliin
-function openKLibraryPickerForValve(v) {
-    const listEl = document.getElementById('user-k-list');
-    if (!listEl) return;
+function parseValveTypeKey(type) {
+    if (!type) return null;
 
-    listEl.innerHTML = '';
-    listEl.style.display = 'none';
+    // Odotetut tyypit esim:
+    // "f_kso125" "f_kts125" "f_iris160" "kso125" ...
+    const s = String(type).toLowerCase();
 
-    if (!v?.flowType) {
-        alert('Valitse ensin runkokanava (tulo / poisto)');
-        return;
-    }
+    // 1) yritä muotoa *_<model><size>
+    //    ottaa viimeisimmän <kirjaimet><numerot> -jakson
+    const m = s.match(/([a-zåäö]+)\s*[-_]*\s*(\d{2,4})\s*$/i) || s.match(/([a-zåäö]+)(\d{2,4})/i);
+    if (!m) return null;
 
-    const modelEl = document.getElementById('valve-model');
-    const sizeEl  = document.getElementById('valve-size');
+    const model = String(m[1] || '').replace(/[^a-zåäö]/gi, '').toUpperCase();
+    const size = Number(m[2]);
 
-    const model = modelEl?.value;
-    const sizeId = sizeEl?.value;
+    if (!model || !Number.isFinite(size)) return null;
 
-    // Selvitä koko (mm) valveGroupsin perusteella (sizeEl.value ei ole mm!)
-    const modelKey = modelEl?.value;
-    const arr = valveGroups?.[modelKey] || [];
-    const found = arr.find(x => x.id === sizeId);
-    const sizeMm = Number(found?.size);
-
-    if (!model || !sizeMm) {
-        alert('Valitse ensin venttiilimalli ja koko');
-        return;
-    }
-
-    const valveId = buildValveId({
-        manufacturer: model.split(' ')[0] || '',
-        model,
-        size: sizeMm
-    });
-
-    const lib = window.userKLibrary?.[v.flowType];
-    if (!lib || !lib[valveId]) {
-        listEl.innerHTML = `
-            <div style="padding:6px;color:#777;">
-                Ei tallennettuja K-arvoja tälle venttiilille
-            </div>`;
-        listEl.style.display = 'block';
-        return;
-    }
-
-    const entries = Array.isArray(lib[valveId].entries) ? lib[valveId].entries.slice() : [];
-    if (!entries.length) {
-        listEl.innerHTML = `
-            <div style="padding:6px;color:#777;">
-                Ei tallennettuja K-arvoja tälle venttiilille
-            </div>`;
-        listEl.style.display = 'block';
-        return;
-    }
-
-    // Järjestä avauksen mukaan
-    entries.sort((a, b) => Number(a.opening) - Number(b.opening));
-
-    // ⭐ Suositus: jos avaus annettu → lähin, muuten mediaani
-    let recommended = null;
-    if (v.pos !== null && v.pos !== undefined && v.pos !== '') {
-        recommended = findClosestOpening(entries, Number(v.pos));
-    }
-    if (!recommended) {
-        recommended = findMedianEntry(entries);
-    }
-
-    const displayName = lib[valveId].displayName || `${model} Ø${sizeMm}`;
-
-    let html = `
-        <div style="margin-top:6px;font-size:12px;">
-            <b>${displayName}</b>
-            ${recommended ? `
-                <span style="margin-left:8px; padding:2px 6px; border-radius:10px; background:#e3f2fd; font-weight:bold;">
-                    ⭐ Suositus
-                </span>` : ''}
-        </div>
-
-        <table style="width:100%;font-size:12px;margin-top:6px;border-collapse:collapse;">
-            <thead>
-                <tr style="border-bottom:1px solid #ddd;">
-                    <th style="text-align:right;padding:6px;">Avaus</th>
-                    <th style="text-align:right;padding:6px;">K</th>
-                    <th style="padding:6px;"></th>
-                </tr>
-            </thead>
-            <tbody>
-    `;
-
-    entries.forEach(e => {
-        const isRecommended =
-            recommended &&
-            Number(e.opening) === Number(recommended.opening) &&
-            Number(e.k) === Number(recommended.k);
-
-        html += `
-            <tr style="
-                border-bottom:1px solid #f0f0f0;
-                ${isRecommended ? 'background:#e3f2fd;font-weight:bold;' : ''}
-            ">
-                <td style="text-align:right;padding:6px;">
-                    ${Number(e.opening).toFixed(1)}${isRecommended ? ' ⭐' : ''}
-                </td>
-                <td style="text-align:right;padding:6px;">
-                    ${Number(e.k).toFixed(2)}
-                </td>
-                <td style="padding:6px; text-align:right;">
-                    <button class="btn btn-xs"
-                        onclick="applyKFromLibrary(${Number(e.opening)}, ${Number(e.k)})">
-                        ${isRecommended ? 'Käytä suositeltua' : 'Käytä'}
-                    </button>
-                </td>
-            </tr>
-        `;
-    });
-
-    html += `</tbody></table>`;
-
-    listEl.innerHTML = html;
-    listEl.style.display = 'block';
+    return { model, size };
 }
+function getValveCategoryFromType(type) {
+    if (!type) return 'other';
+
+    const t = String(type).toLowerCase();
+
+    // Säätöpellit / mittauspellit
+    if (
+        t.includes('iris') ||
+        t.includes('pelti') ||
+        t.includes('dru') ||
+        t.includes('spm')
+    ) {
+        return 'damper';
+    }
+
+    // Poistoventtiilit (heuristiikka)
+    if (
+        t.includes('epo') ||
+        t.includes('poisto') ||
+        t.includes('extract')
+    ) {
+        return 'extract';
+    }
+
+    // Tulo on oletus (valtaosa päätelaitteista)
+    return 'supply';
+}
+
 
 
 
@@ -710,39 +730,7 @@ function getSelectedValveSizeMm() {
 
 
 // Hae kaikki rivit yhdelle avaimelle (järjestettynä avauksen mukaan)
-function getUserKEntries(key) {
-    ensureUserKLibraryReady();
-    const arr = window.userKLibrary[key];
-    if (!Array.isArray(arr)) return [];
-    // järjestä avauksen mukaan
-    return arr.slice().sort((a, b) => (parseFloat(a.opening) || 0) - (parseFloat(b.opening) || 0));
-}
 
-// Lisää uusi K-rivi (A-malli: sallitaan useita saman avauksenkin alle, eri note:lla)
-
-// Poista yksi rivi (täsmäosuma: opening + k + note)
-function deleteUserKEntryByIndex(key, idx) {
-    ensureUserKLibraryReady();
-
-    const list = window.userKLibrary[key];
-    if (!Array.isArray(list) || !list[idx]) return;
-
-    const row = list[idx];
-
-    const ok = confirm('Poistetaanko tämä K-arvo?');
-    if (!ok) return;
-
-    const removed = deleteUserKEntry({
-        key,
-        opening: row.opening,
-        k: row.k,
-        note: row.note
-    });
-
-    if (removed) {
-        renderKLibraryList(key);
-    }
-}
 /* =====================================================
    VALVE GROUPS – SINGLE INIT SOURCE (ÄLÄ KOSKE MUUALTA)
    ===================================================== */
@@ -1056,40 +1044,125 @@ function updateDuctStatus(duct) {
     el.className = 'duct-status ' + pctClass(avg);
 }
 function bindMeasurementListV2(container) {
-    container.querySelectorAll('tr.valve-row input').forEach(inp => {
-        inp.addEventListener('input', () => {
-            const tr = inp.closest('tr');
-            const valveId = tr?.dataset?.id;
+    container.addEventListener('input', (e) => {
+        const inp = e.target;
+        if (!(inp instanceof HTMLInputElement)) return;
 
-            const p = projects.find(x => x.id === activeProjectId);
-            if (!p) return;
+        const field = inp.dataset.f;
+        if (!field) return;
 
-            const machine = getActiveMachine(p);
-            if (!machine) return;
+        const tr = inp.closest('tr');
+        if (!tr) return;
 
-            const mode = window.currentMode || 'home';
-            const ducts = machine.modes?.[mode]?.ducts || [];
+        const valveId = tr.dataset.id;
 
-            const duct = ducts.find(d =>
-                (d.valves || []).some(v =>
-                    (v.id === valveId) || (v.__isDraft && tr.classList.contains('draft-row'))
-                )
-            );
-            if (!duct) return;
+        const p = projects.find(x => x.id === activeProjectId);
+        if (!p) return;
 
-            const v = (duct.valves || []).find(x =>
-                x.id === valveId || (x.__isDraft && tr.classList.contains('draft-row'))
-            );
-            if (!v) return;
+        const machine = getActiveMachine(p);
+        if (!machine) return;
 
-            const field = inp.dataset.f;
-            if (field) v[field] = inp.value;
+        const mode = window.currentMode || 'home';
+        const ducts = machine.modes?.[mode]?.ducts || [];
 
-            const promoted = promoteDraftIfNeeded(duct, v);
-            if (promoted) {
-                renderMeasurementListV2(container);
+        let duct = null;
+        let v = null;
+
+        // 🔎 Hae venttiili (myös draft)
+        for (const d of ducts) {
+            for (const valve of d.valves || []) {
+                if (
+                    valve.id === valveId ||
+                    (valve.__isDraft && tr.classList.contains('draft-row'))
+                ) {
+                    duct = d;
+                    v = valve;
+                    break;
+                }
             }
+            if (v) break;
+        }
+
+        if (!v) return;
+
+        // 🔹 Päivitä kenttä dataan
+        if (field === 'kWorking') {
+            v.kWorking = inp.value === '' ? '' : Number(inp.value);
+        } else {
+            v[field] = inp.value;
+        }
+
+       if (v.__isDraft) {
+    const promoted = promoteDraftIfNeeded(duct, v);
+    if (promoted) {
+        // 🔁 renderöidään KERRAN, turvallisessa kohdassa
+        requestAnimationFrame(() => {
+         
+
         });
+        return;
+    }
+
+
+}
+
+        // 🔄 Päivitä näkyvä tila kun avaus tai K muuttuu
+if (!v.__isDraft && (field === 'pos' || field === 'kWorking')) {
+    requestAnimationFrame(() => {
+    });
+}
+
+
+        // ✅ 1) KÄSIN SYÖTETTY K → näytä 💾 heti (ei rerenderiä)
+        if (field === 'kWorking') {
+            // draft-rivillä ei ikonia
+            if (v.__isDraft) return;
+
+            const kCell = tr.querySelector('td.k-cell');
+            if (!kCell) return;
+
+            // poistetaan vanha ikoni jos on
+            const old = kCell.querySelector('.k-save-hint');
+            if (old) old.remove();
+
+            // näytä vain jos K on oikeasti syötetty
+            if (v.kWorking != null && v.kWorking !== '' && Number.isFinite(Number(v.kWorking))) {
+                // (vaihe A logiikka: näytä jos uusi)
+                if (typeof isKValueNewForValve === 'function' ? isKValueNewForValve(v) : true) {
+                    const span = document.createElement('span');
+                    span.className = 'k-save-hint';
+                    span.title = 'Tallenna K-arvo kirjastoon';
+                    span.textContent = '💾';
+                    span.style.position = 'absolute';
+                    span.style.right = '6px';
+                    span.style.top = '50%';
+                    span.style.transform = 'translateY(-50%)';
+                    span.style.cursor = 'pointer';
+                    span.style.fontSize = '15px';
+                    span.style.opacity = '0.8';
+
+                    span.addEventListener('click', (ev) => {
+                        ev.stopPropagation();
+                        if (typeof openSaveKModal === 'function' && v.id) {
+                            openSaveKModal(v.id);
+                        }
+                    });
+
+                    kCell.appendChild(span);
+                }
+            }
+
+            return; // ei muuta tässä
+        }
+
+        // 🔹 K-ehdotus (päätelaite + avaus)
+        if (field === 'type' || field === 'pos') {
+            const suggestedK = resolveWorkingKForValve(v);
+            if (Number.isFinite(suggestedK)) {
+                v.kWorking = suggestedK;
+                return;
+            }
+        }
     });
 }
 
@@ -1176,7 +1249,7 @@ function createEmptyMachine({ id, name, type = 'ahu' }) {
     return {
         id,
         name,
-        type, // 'ahu' | 'exhaust'
+        type,
         modes: {
             home:   { ducts: [], summary: {} },
             away:   { ducts: [], summary: {} },
@@ -1184,6 +1257,7 @@ function createEmptyMachine({ id, name, type = 'ahu' }) {
         }
     };
 }
+
 
 
 // ===============================
@@ -1594,123 +1668,39 @@ function bindMeasurementListEvents(container) {
     });
 }
 function getKFromLibrary({ model, size, pos }) {
-    if (!model || !size || !Number.isFinite(pos)) return null;
-
-    let lib = window.userKLibrary;
-
-    if (!Array.isArray(lib)) {
-        try {
-            const raw = localStorage.getItem('userKLibrary');
-            lib = raw ? JSON.parse(raw) : [];
-        } catch {
-            lib = [];
-        }
-    }
-
-    if (!Array.isArray(lib)) return null;
-
-    const hit = lib.find(e =>
-    e.model === model &&
-    e.size === size &&
-    Number(e.pos) === Number(pos)
-);
-
-
-    return Number.isFinite(hit?.k) ? hit.k : null;
+    // ❌ LEGACY K-LIBRARY (DISABLED)
+// function getKFromLibrary(type, pos) {
+//     ...
+// }
 }
 
 
 function tryGetKFromLibrary(type, pos) {
-    if (!window.userKLibrary) return null;
+   // ❌ LEGACY K-LIBRARY (DISABLED)
+// function tryGetKFromLibrary(...) {
+//     ...
+// }
 
-    const key = `${type}:${pos}`;
-    return window.userKLibrary[key] ?? null;
 }
 // 🔒 Varmista että K-kirjasto on AINA taulukko
 (function ensureKLibrary() {
-    try {
-        const raw = localStorage.getItem('userKLibrary');
-        if (raw) {
-            const parsed = JSON.parse(raw);
-            window.userKLibrary = Array.isArray(parsed) ? parsed : [];
-        } else {
-            window.userKLibrary = [];
-        }
-    } catch (e) {
-        console.warn('K-kirjaston luku epäonnistui, nollataan', e);
-        window.userKLibrary = [];
-    }
+   // ❌ LEGACY K-LIBRARY (DISABLED)
+// (function ensureKLibrary() {
+//     ...
+// })();
+
 })();
 
 function saveKToLibrary(entry) {
-    if (!entry || !entry.size || !Number.isFinite(entry.k)) return;
+    // ❌ LEGACY K-LIBRARY (DISABLED)
+// function saveKToLibrary(...) {
+//     ...
+// }
 
-    // 🔒 VARMISTA AINA, että userKLibrary on taulukko
-    let lib = window.userKLibrary;
-
-    if (!Array.isArray(lib)) {
-        try {
-            const raw = localStorage.getItem('userKLibrary');
-            const parsed = raw ? JSON.parse(raw) : [];
-            lib = Array.isArray(parsed) ? parsed : [];
-        } catch (e) {
-            lib = [];
-        }
-    }
-
-    // 🔒 Aseta takaisin globaaliin
-    window.userKLibrary = lib;
-
-    // ❌ Estä duplikaatit (malli + koko + avaus)
-    const existing = lib.find(e =>
-        e.model === entry.model &&
-        e.size === entry.size &&
-        Number(e.pos) === Number(entry.pos)
-    );
-
-    if (existing) {
-        existing.k = entry.k;
-    } else {
-        lib.push({
-            model: entry.model,
-            size: entry.size,
-            pos: entry.pos,
-            k: entry.k
-        });
-    }
-
-    // 💾 Tallenna localStorageen
-    try {
-        localStorage.setItem('userKLibrary', JSON.stringify(lib));
-    } catch (e) {
-        console.warn('K-kirjaston tallennus epäonnistui', e);
-    }
-
-    console.log('✅ K tallennettu kirjastoon:', entry);
 }
 
 
-function deleteUserKEntry({ key, opening, k, note }) {
-    ensureUserKLibraryReady();
-    if (!key || !Array.isArray(window.userKLibrary[key])) return false;
 
-    const op = normalizeOpening(opening);
-    const kv = normalizeKValue(k);
-    const nt = String(note || '').trim();
-
-    const before = window.userKLibrary[key].length;
-
-    window.userKLibrary[key] = window.userKLibrary[key].filter(r => {
-        const rop = normalizeOpening(r.opening);
-        const rkv = normalizeKValue(r.k);
-        const rnt = String(r.note || '').trim();
-        return !(rop === op && rkv === kv && rnt === nt);
-    });
-
-    const after = window.userKLibrary[key].length;
-    saveUserKLibrary();
-    return after !== before;
-}
 
 // Palauta interpoloitu K käyttäjän omista arvoista (väliarvot)
 // HUOM: käyttää olemassa olevaa getInterpolatedUserK(...) jos sinulla on se jo.
@@ -1924,66 +1914,8 @@ function updateCalculatedFlowPreview() {
 }
 
 
-function renderKLibraryList(type) {
-    ensureUserKLibraryReady();
 
-    const listEl = document.getElementById('k-lib-list');
-    if (!listEl) return;
 
-    const list = window.userKLibrary[type] || [];
-
-    if (list.length === 0) {
-        listEl.innerHTML = `<div style="padding:10px;color:#777;">Ei tallennettuja K-arvoja tässä luokassa</div>`;
-        return;
-    }
-
-    let html = `
-        <table style="width:100%; border-collapse:collapse; font-size:13px;">
-            <thead>
-                <tr style="border-bottom:1px solid #ccc;">
-                    <th style="text-align:left; padding:6px;">Kohde</th>
-                    <th style="text-align:right; padding:6px;">Avaus</th>
-                    <th style="text-align:right; padding:6px;">K</th>
-                    <th style="width:40px;"></th>
-                </tr>
-            </thead>
-            <tbody>
-    `;
-
-    list.forEach((item, idx) => {
-        const label =
-            (item.model ? item.model : '—') +
-            (item.size ? ` Ø${item.size}` : '') +
-            (item.note ? ` · ${item.note}` : '');
-
-        html += `
-            <tr style="border-bottom:1px solid #eee;">
-                <td style="padding:6px;">${label}</td>
-                <td style="padding:6px; text-align:right;">${Number(item.opening).toFixed(1)}</td>
-                <td style="padding:6px; text-align:right;">${Number(item.k).toFixed(2)}</td>
-                <td style="text-align:center;">
-                    <button class="btn btn-xs btn-danger"
-                            onclick="deleteUserKEntryByIndex('${type}', ${idx})">🗑️</button>
-                </td>
-            </tr>
-        `;
-    });
-
-    html += `</tbody></table>`;
-    listEl.innerHTML = html;
-}
-
-function deleteUserKEntryByIndex(type, idx) {
-    ensureUserKLibraryReady();
-    if (!window.userKLibrary[type] || !window.userKLibrary[type][idx]) return;
-
-    const ok = confirm('Poistetaanko tämä K-arvo?');
-    if (!ok) return;
-
-    window.userKLibrary[type].splice(idx, 1);
-    saveUserKLibrary();
-    renderKLibraryList(type);
-}
 
 function applyUserKFromLibrary(index) {
     const kInput = document.getElementById('valve-k');
@@ -1992,18 +1924,6 @@ function applyUserKFromLibrary(index) {
     kInput.value = Number(kInput.value).toFixed(2);
 }
 
-function removeUserKEntry(key, index) {
-    if (!window.userKLibrary?.[key]) return;
-
-    const ok = confirm('Poistetaanko tämä K-arvo omasta kirjastosta?');
-    if (!ok) return;
-
-    window.userKLibrary[key].splice(index, 1);
-
-    if (window.userKLibrary[key].length === 0) {
-        delete window.userKLibrary[key];
-    }
-}
 
 
 
@@ -2193,23 +2113,6 @@ function getInterpolatedUserK(userKList, opening) {
         source: 'user-interpolated'
     };
 }
-function getUserKForValve(valveType, opening) {
-    if (!window.userKLibrary) return null;
-
-    const list = window.userKLibrary[valveType];
-    if (!Array.isArray(list)) return null;
-
-    return list.find(e => Number(e.opening) === Number(opening)) || null;
-}
-function getUserKListForValve(valveType) {
-    if (!window.userKLibrary) return [];
-    return window.userKLibrary[valveType] || [];
-}
-function ensureUserKLibraryReady() {
-    if (!window.userKLibrary) {
-        window.userKLibrary = {};
-    }
-}
 
 // ============================
 // K-KIRJASTO (projektiin)
@@ -2223,6 +2126,369 @@ function ensureProjectKLibrary() {
         p.kLibrary = {};
     }
 }
+function saveKToLibraryFromValve(v) {
+
+    // 🔒 NORMALISOI TYYPPI ENNEN TARKISTUKSIA
+    if (v && v.__rowEl) {
+        const typeInput = v.__rowEl.querySelector('input[data-f="type"]');
+        if (typeInput && typeInput.dataset.raw) {
+            v.type = typeInput.dataset.raw;
+        }
+    }
+
+    // 🔒 VARMISTUS
+    if (!v.type || !window.valveDB || !window.valveDB[v.type]) {
+        alert(
+            'Tätä päätelaitemallia ei tunnistettu.\n' +
+            'Valitse päätelaite listasta ennen K-arvon tallennusta.'
+        );
+        return;
+    }
+
+    // ... loput funktiosta ENNALLAAN
+}
+
+function openSaveKModal(valveId) {
+    const p = projects.find(x => x.id === activeProjectId);
+    if (!p) return;
+
+    const machine = getActiveMachine(p);
+    if (!machine) return;
+
+    const mode = window.currentMode || 'home';
+    const ducts = machine.modes?.[mode]?.ducts || [];
+
+    let v = null;
+    for (const d of ducts) {
+        v = (d.valves || []).find(x => x.id === valveId);
+        if (v) break;
+    }
+    if (!v) return;
+
+    // pura tyyppi → malli + koko
+    const parsed = parseValveTypeKey(v.type);
+    if (!parsed) {
+        alert('Venttiilin mallia ei voitu tunnistaa.');
+        return;
+    }
+
+    showSaveKConfirmModal({
+        model: parsed.model,
+        size: parsed.size,
+        opening: Number(v.pos),
+        k: Number(v.kWorking),
+        valveId: v.id
+    });
+}
+function showSaveKConfirmModal(input) {
+    let v = null;
+
+    // 🟢 UUSI TAPA: input on valveId
+    if (typeof input === 'string') {
+        v = findValveById(input);
+    }
+
+    // 🟡 VANHA / LEGACY TAPA: input on objekti jossa valveId
+    if (!v && input && typeof input === 'object') {
+        if (input.valveId) {
+            v = findValveById(input.valveId);
+        }
+    }
+
+    if (!v) {
+        console.warn('showSaveKConfirmModal: valve not found', input);
+        return;
+    }
+
+    const msg =
+        `Tallennetaanko tämä K-arvo kirjastoon?\n\n` +
+        `Malli: ${formatValveDisplay(v.type)}\n` +
+        `Avaus: ${v.pos}\n` +
+        `K: ${v.kWorking}`;
+
+    if (!confirm(msg)) return;
+
+    // 💾 tallenna kirjastoon
+    saveKToLibraryFromValve(v);
+
+    // 🔒 lukitse tälle venttiilille
+    approveKForValve(v);
+
+    // 🔁 päivitä näkymä
+    refreshMeasurementList();
+}
+
+
+
+function confirmSaveKValue(payload) {
+    if (!payload) return;
+
+    const entry = {
+        kind: payload.kind || 'other',
+        model: payload.model,
+        size: payload.size || '',
+        variant: payload.variant || '',
+        pos: Number(payload.pos),
+        k: Number(payload.k),
+        note: payload.note || '',
+        source: payload.source || 'manual'
+    };
+
+    // 🔑 B-malli: varoitus + automaattinen korvaus
+    klibUpsertEntry(entry, { warn: true });
+
+    closeModal?.();
+
+    // 🔁 Päivitä UI YHDESTÄ paikasta
+    renderActiveProject();
+}
+function renderKLibraryAdmin() {
+    // Varmista että kirjastodata on muistissa (jos load on olemassa)
+    try { if (typeof klibLoad === 'function') klibLoad(); } catch (e) {}
+
+    const infoEl  = document.getElementById('klibAdminInfo');
+    const listEl  = document.getElementById('klibAdminCards');
+    const searchEl = document.getElementById('klibSearch');
+
+    if (!listEl) return;
+
+    // ✅ oletuskategoria
+    window.uiState = window.uiState || {};
+    if (!window.uiState.klibCategory) window.uiState.klibCategory = 'valve';
+
+    const category = window.uiState.klibCategory || 'valve';
+    const q = (searchEl?.value || '').trim().toLowerCase();
+
+    const entries = (window.userKLibraryV2?.entries || []).slice();
+
+    // --- Kategoria: päätellään entry.kind:stä ---
+    // Venttiilit: supply/extract (yleisin)
+    // Pellit: damper
+    // Hajottajat: diffuser (jos joskus lisätään)
+    // Muut: other + kaikki muu
+    const categoryOf = (e) => {
+        const k = String(e?.kind || 'other').toLowerCase().trim();
+        if (k === 'damper') return 'damper';
+        if (k === 'diffuser') return 'diffuser';
+        if (k === 'supply' || k === 'extract') return 'valve';
+        if (k === 'valve') return 'valve';
+        return 'other';
+    };
+
+    // --- Hakuteksti: nopea “yksi kenttä” haku ---
+    const haystack = (e) => {
+        const parts = [
+            e.kind, e.model, e.size, e.variant, e.pos, e.k, e.note, e.source
+        ].map(x => (x == null ? '' : String(x)));
+        return parts.join(' ').toLowerCase();
+    };
+
+    // --- suodatus ---
+    let filtered = entries.filter(e => {
+        if (!e) return false;
+
+        if (category !== 'all') {
+            if (categoryOf(e) !== category) return false;
+        }
+
+        if (!q) return true;
+        return haystack(e).includes(q);
+    });
+
+    // --- lajittelu: malli -> koko -> pos ---
+    const num = (x) => {
+        const n = Number(String(x).replace(',', '.'));
+        return isFinite(n) ? n : null;
+    };
+    filtered.sort((a, b) => {
+        const am = (a.model || '').localeCompare(b.model || '', 'fi');
+        if (am !== 0) return am;
+
+        const as = num(a.size); const bs = num(b.size);
+        if (as != null && bs != null && as !== bs) return as - bs;
+
+        const ap = num(a.pos); const bp = num(b.pos);
+        if (ap != null && bp != null && ap !== bp) return ap - bp;
+
+        return (b.createdAt || 0) - (a.createdAt || 0);
+    });
+
+    // --- info ---
+    const total = entries.length;
+    const shown = filtered.length;
+    const catName =
+        category === 'valve' ? 'Venttiilit' :
+        category === 'damper' ? 'Säätimet' :
+        category === 'diffuser' ? 'Hajottajat' :
+        category === 'other' ? 'Muut' : 'Kaikki';
+
+    if (infoEl) {
+        infoEl.innerHTML =
+            `Kategoria: <b>${catName}</b> • Näytetään <b>${shown}</b> / ${total} • ` +
+            `Haku: <b>${q ? q : '-'}</b>`;
+    }
+
+    // --- tyhjä ---
+    if (!shown) {
+        listEl.innerHTML = `
+            <div style="padding:12px; background:#fff; border:1px dashed #ddd; border-radius:12px; color:#666;">
+                Ei osumia. Kokeile lyhyempää hakua (esim. “kso 125”).
+            </div>
+        `;
+        // lisää live-haku vain kerran
+        if (searchEl && !searchEl.__klibHooked) {
+            searchEl.__klibHooked = true;
+            searchEl.addEventListener('input', () => renderKLibraryAdmin());
+        }
+        return;
+    }
+
+    // --- kortit ---
+    const esc = (s) => String(s || '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+
+    const fmtDate = (ts) => {
+        if (!ts) return '';
+        try { return new Date(ts).toLocaleString('fi-FI', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' }); }
+        catch { return ''; }
+    };
+
+    listEl.innerHTML = filtered.map(e => {
+        const kind = esc(e.kind || 'other');
+        const model = esc(e.model || '');
+        const size  = esc(e.size || '');
+        const variant = esc(e.variant || '');
+        const pos   = (e.pos == null ? '' : esc(e.pos));
+        const k     = (isFinite(Number(e.k)) ? Number(e.k).toFixed(2) : esc(e.k));
+        const note  = esc(e.note || '');
+        const src   = esc(e.source || '');
+        const stamp = fmtDate(e.updatedAt || e.createdAt);
+
+        const badge =
+            (kind === 'supply') ? '🔵 Tulo' :
+            (kind === 'extract') ? '🔴 Poisto' :
+            (kind === 'damper') ? '🟠 Pelti' :
+            (kind === 'diffuser') ? '🟣 Hajottaja' : '⚪ Muu';
+
+        return `
+        <div style="
+            background:#fff;
+            border:1px solid #e6e6e6;
+            border-radius:14px;
+            padding:12px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        ">
+            <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start;">
+                <div style="min-width:0;">
+                    <div style="font-size:14px; font-weight:800; line-height:1.2; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                        ${model} ${size ? ('Ø' + size) : ''} ${variant ? ('• ' + variant) : ''}
+                    </div>
+                    <div style="font-size:12px; color:#666; margin-top:4px;">
+                        ${badge} • Avaus: <b>${pos}</b> • K: <b style="font-size:14px;">${k}</b>
+                    </div>
+                    ${note ? `<div style="font-size:12px; color:#444; margin-top:6px;">📝 ${note}</div>` : ''}
+                    <div style="font-size:11px; color:#888; margin-top:6px;">
+                        ${src ? `Lähde: ${src}` : ''} ${stamp ? ` • ${stamp}` : ''}
+                    </div>
+                </div>
+
+                <div style="display:flex; flex-direction:column; gap:6px; flex:0 0 auto;">
+                    <button class="btn btn-secondary"
+        style="padding:6px 10px; font-size:12px;"
+        onclick='openKLibDetail(${JSON.stringify(e).replace(/'/g,"&#039;")})'>
+    ⚙️ Avaa
+</button>
+
+                </div>
+            </div>
+        </div>`;
+    }).join('');
+
+    // ✅ live-haku vain kerran
+    if (searchEl && !searchEl.__klibHooked) {
+        searchEl.__klibHooked = true;
+        searchEl.addEventListener('input', () => renderKLibraryAdmin());
+    }
+}
+
+
+function deleteKEntry(id) {
+    if (!confirm('Poistetaanko K-arvo pysyvästi?')) return;
+    klibDeleteEntry(id);
+    renderKLibraryAdmin();
+}
+
+function renderKLibRow(e) {
+    return `
+      <tr>
+        <td>${e.kind}</td>
+        <td>${escapeHtml(e.model)}</td>
+        <td>${escapeHtml(e.size || '')}</td>
+
+        <td>
+          <input value="${escapeHtml(e.variant || '')}"
+                 onchange="klibAdminUpdate('${e.id}', { variant: this.value })">
+        </td>
+
+        <td>${e.pos}</td>
+
+        <td>
+          <input type="number" step="0.01"
+                 value="${e.k}"
+                 onchange="klibAdminUpdate('${e.id}', { k: Number(this.value) })">
+        </td>
+
+        <td>
+          <input value="${escapeHtml(e.note || '')}"
+                 onchange="klibAdminUpdate('${e.id}', { note: this.value })">
+        </td>
+
+        <td>
+          <button onclick="klibAdminDelete('${e.id}')">🗑️</button>
+        </td>
+      </tr>
+    `;
+}
+function klibAdminUpdate(id, patch) {
+    if (!id || !patch) return;
+
+    klibUpdateEntry(id, patch); // 10.3.3
+    klibSave();                 // varmistus
+}
+
+function klibAdminDelete(id) {
+    if (!id) return;
+    if (!confirm('Poistetaanko K-arvo pysyvästi?')) return;
+
+    klibDeleteEntry(id); // 10.3.3
+    klibSave();
+
+    renderKLibraryAdmin();
+}
+
+function openKLibraryAdmin() {
+    // Vaihda näkymä
+    showView('view-klib-admin');
+
+    // Turvallinen placeholder: EI kutsu vanhaa K-kirjastoa
+    const body = document.getElementById('klibTableBody');
+    if (body) {
+        body.innerHTML = `
+            <tr>
+                <td colspan="8" style="padding:20px; text-align:center; color:#777;">
+                    K-kirjasto valmis – ei vielä merkintöjä.
+                </td>
+            </tr>
+        `;
+    }
+}
+
+
+
 function openAddKModal() {
     ensureUserKLibraryReady();
 
@@ -2336,34 +2602,6 @@ function closeAddKModal() {
     ov.style.display = 'none';
 }
 
-function saveUserKFromAddModal() {
-    ensureUserKLibraryReady();
-
-    const type = document.getElementById('add-k-group')?.value || 'other';
-    const model = (document.getElementById('add-k-model')?.value || '').trim();
-    const size = Number(document.getElementById('add-k-size')?.value);
-    const opening = Number(document.getElementById('add-k-opening')?.value);
-    const k = Number(document.getElementById('add-k-value')?.value);
-    const note = (document.getElementById('add-k-note')?.value || '').trim();
-
-    if (!opening || opening <= 0 || !k || k <= 0) {
-        alert('Anna avaus ja K-arvo');
-        return;
-    }
-
-    // ✅ tallenna USER-kirjastoon ryhmän alle
-    window.userKLibrary[type].push({
-        opening,
-        k,
-        note,
-        model,
-        size
-    });
-
-    saveUserKLibrary();
-    closeAddKModal();
-    renderKLibraryList(type);
-}
 
 function closeAddKModal() {
     const ov = document.getElementById('add-k-overlay');
@@ -2924,6 +3162,13 @@ function canEditValve(v, analysis) {
     // Vain säädettävät
     return res.code === 'ADJUST_OPEN' || res.code === 'ADJUST_CHOKE';
 }
+function normalizeValveType(t) {
+    if (!t) return '';
+    return String(t)
+        .toLowerCase()
+        .replace(/\s+/g, '')
+        .replace(/[-_]/g, '');
+}
 
 function formatValveDisplay(type) {
     if (!type) return "-";
@@ -3103,68 +3348,7 @@ function renameActiveProject() {
     }
 }
 // Demo: Tulo/Poisto kerrostalo, luo raput, kerrokset, asunnot, kanavat, venttiilit ja AHU:t
-function createDemoTuloPoisto(){
-    const proj = {
-        id: genId(),
-        name: 'Demo: Kerrostalo (KTS/KSO)',
-        systemType: 'kerrostalo',
-        ducts: [],
-        valves: [],
-        machines: [],
-        meta: { floorMap: {}, aptsPerFloor: 3 }
-    };
-    
-    const letters = ['A','B'];
-    const floors = [1,2];
-    
-    const rnd = (target)=> Number((target + (Math.random()*4.0 - 2.0)).toFixed(1)); 
-    const rposT = ()=> Math.round(3 + Math.random()*5); // Tulo 3-8
-    const rposP = ()=> Math.round(-5 + Math.random()*10); // Poisto -5 ... 5
-    const rpa = ()=> Number((30 + Math.random()*40).toFixed(0));
 
-    letters.forEach(L=>{
-        floors.forEach(floor=>{
-            for(let i=1;i<=proj.meta.aptsPerFloor;i++){
-                const aptCode = `${L}${floor}0${i}`; 
-                proj.meta.floorMap[aptCode] = floor;
-                
-                const supPct = 50; 
-                const extPct = 50;
-                proj.machines.push({ id: genId(), type:'ahu', group:'apt', apartment:aptCode, name:`AHU ${aptCode}` , supPct, extPct });
-                
-                const supplyId = genId();
-                const extractId = genId();
-                proj.ducts.push({ id: supplyId, type:'supply', group:'apt', apartment:aptCode, name:`Tulo ${aptCode}` });
-                proj.ducts.push({ id: extractId, type:'extract', group:'apt', apartment:aptCode, name:`Poisto ${aptCode}` });
-                
-                // TULO: KTS-125
-                proj.valves.push({ id: genId(), parentDuctId: supplyId, type:'h_kts125', apartment:aptCode, name:'Tulo', room:'Olohuone', targetFlow: 15.0, flow: rnd(15.0), pos: rposT(), measuredP: rpa() });
-                proj.valves.push({ id: genId(), parentDuctId: supplyId, type:'h_kts125', apartment:aptCode, name:'Tulo', room:'Makuuhuone', targetFlow: 12.0, flow: rnd(12.0), pos: rposT(), measuredP: rpa() });
-                
-                // POISTO: KSO-125
-                proj.valves.push({ id: genId(), parentDuctId: extractId, type:'h_kso125', apartment:aptCode, name:'Poisto', room:'WC', targetFlow: 10.0, flow: rnd(10.0), pos: rposP(), measuredP: rpa() });
-                proj.valves.push({ id: genId(), parentDuctId: extractId, type:'h_kso125', apartment:aptCode, name:'Poisto', room:'KPH', targetFlow: 15.0, flow: rnd(15.0), pos: rposP(), measuredP: rpa() });
-                proj.valves.push({ id: genId(), parentDuctId: extractId, type:'h_kso125', apartment:aptCode, name:'Poisto', room:'Keittiö', targetFlow: 10.0, flow: rnd(10.0), pos: rposP(), measuredP: rpa() });
-            }
-        });
-        // Runkokanava
-        proj.ducts.push({ id: genId(), type:'extract', group:'roof', name:`${L}-Rappu Poisto` });
-    });
-    
-    projects.push(proj);
-    activeProjectId = proj.id;
-    saveData();
-    currentMode = 'visual';
-    window._aptRappuFilter = null;
-    
-    // Siirry suoraan visualisointiin
-    if (typeof showVisual === 'function') {
-        showVisual();
-    } else {
-        renderVisualContent();
-        showView('view-visual');
-    }
-}
 
 // Poista yksittäinen asunto (kerrostalo): poistaa sen apt-ductit, koneen ja siihen liittyvät venttiilit, sekä floorMap-merkinnän
 function deleteApartment(aptCode){
@@ -3789,38 +3973,7 @@ function updateFabVisibility() {
 }
 
 
-// ✅ FAB-nappi: avaa projektivalinta mistä tahansa
-window.showView = function (viewId) {
-    // 🔒 Tallenna aktiivinen näkymä UI-tilaan
-    window.uiState = window.uiState || {};
-    window.uiState.currentView = viewId;
 
-    // 1. Piilotetaan kaikki näkymät
-    document.querySelectorAll('.view').forEach(v => {
-        v.classList.remove('active');
-        v.style.display = 'none';
-    });
-
-    // 2. Näytetään kohdenäkymä
-    const target = document.getElementById(viewId);
-    if (target) {
-        target.classList.add('active');
-        target.style.display = 'block';
-        applyButtonStyles(target);
-    }
-
-    // 3. Back-nappi + erityislogiikka
-    const backBtn = document.getElementById('backBtn');
-    if (viewId === 'view-projects') {
-        backBtn.style.display = 'none';
-        renderProjects();
-    } else {
-        backBtn.style.display = 'block';
-    }
-
-    // ✅ Päivitä FAB lopuksi
-    updateFabVisibility();
-};
 
 
 function showVisual() {
@@ -3881,21 +4034,34 @@ function calcFanLaw() { const hz = parseFloat(document.getElementById('fanHz').v
 
 // --- TILOJEN HALLINTA & KOPIOINTI ---
 // --- TILOJEN HALLINTA JA SYNKRONOINTI (ÄLYKÄS) ---
+function openMeasurementView() {
+    renderActiveProject(); // 🔑 aina sama entry-point
+}
+
 
 function setMode(mode) {
-    const p = projects.find(x => x.id === activeProjectId);
-    if (!p) return;
+    if (!window.appState?.activeProjectId) {
+        console.warn('Ei aktiivista projektia');
+        return;
+    }
 
-    const targetMode = mode || 'home';
-    window.currentMode = targetMode;
+    window.appState.currentMode = mode;
+    window.currentMode = mode;
 
-    // Varmista että aktiivisella koneella on tämä mode-rakenne olemassa
-    getActiveMachineMode(p, targetMode);
+    console.log('🔄 Tila asetettu:', mode);
 
-    saveData?.();
-    renderDetailsList?.();
-    if (window.activeVisMode) renderVisualContent?.();
+    renderActiveProject();
 }
+function setActiveMachine(machineId) {
+    if (!window.uiState) window.uiState = {};
+    window.uiState.activeMachineId = machineId;
+
+    console.log('🧭 Aktiivinen kone:', machineId);
+
+    renderActiveProject();
+}
+
+
 
 function calculateAndSave(saveAndNext = false) {
     const measuredP    = parseFloat(document.getElementById('measuredP')?.value);
@@ -4299,86 +4465,54 @@ function deleteValveByIndex(idx) {
 }
 
 
-function createDemoHybrid(){
-    const p = { id: Date.now(), name: 'Demo Hybridi (Standard)', systemType: 'hybrid', ducts: [], valves: [], machines: [], meta: {} };
-    
-    const supId = Date.now()+11, extAhuId = Date.now()+12;
-    p.ducts.push({ id: supId, type: 'supply', name: 'AHU Tulo', size: 160, group:'ahu' });
-    p.ducts.push({ id: extAhuId, type: 'extract', name: 'AHU Poisto', size: 160, group:'ahu' });
-    
-    const roofExtId = Date.now()+13;
-    p.ducts.push({ id: roofExtId, type: 'extract', name: 'Huippuimuri Poisto', size: 200, group:'roof' });
-    
-    p.machines.push({ type:'ahu', name:'IV-Kone', supPct:50, extPct:50 });
-    
-    const rnd = (target) => Number((target + (Math.random() * 4.0 - 2.0)).toFixed(1));
-    const rpos = () => Math.round(2 + Math.random() * 8);
-    const rpa = () => Number((30 + Math.random() * 40).toFixed(0));
+function activateProject(projectId, mode = 'home') {
+    if (!window.appState) window.appState = {};
 
-    // AHU Venttiilit: Tulo (KTS-125) ja Poisto (KSO-125)
-    p.valves.push({ room:'OH (AHU)', type:'h_kts125', target:25, flow:rnd(20), pos:rpos(), measuredP:rpa(), parentDuctId: supId });
-    p.valves.push({ room:'MH (AHU)', type:'h_kts125', target:12, flow:rnd(10), pos:rpos(), measuredP:rpa(), parentDuctId: supId });
-    
-    p.valves.push({ room:'WC (AHU)', type:'h_kso125', target:10, flow:rnd(12), pos:rpos(), measuredP:rpa(), parentDuctId: extAhuId });
-    p.valves.push({ room:'KPH (AHU)', type:'h_kso125', target:15, flow:rnd(18), pos:rpos(), measuredP:rpa(), parentDuctId: extAhuId });
+    window.appState.activeProjectId = projectId;
+    window.appState.currentMode = mode;
+    window.currentMode = mode;
 
-    // Huippuimuri Venttiilit: Vain KSO-125
-    p.valves.push({ apartment:'B1', room:'Keittiö', type:'h_kso125', target:20, flow:rnd(15), pos:rpos(), measuredP:rpa(), parentDuctId: roofExtId });
-    p.valves.push({ apartment:'B2', room:'Keittiö', type:'h_kso125', target:20, flow:rnd(25), pos:rpos(), measuredP:rpa(), parentDuctId: roofExtId });
+    console.log('📂 Projekti aktivoitu:', projectId, mode);
 
-    projects.push(p); saveData(); renderProjects(); activeProjectId = p.id; 
-    if (typeof openProject === 'function') openProject(p.id); else { try { window.openProject(p.id); } catch(e) {} } 
-    alert('Demo Hybridi luotu');
+    renderActiveProject();
 }
- 
 
-function confirmCreateProject() {
-    console.log('confirmCreateProject called');
-    const name = document.getElementById('newProjName').value;
-    const type = document.getElementById('newProjType').value;
-    if (!name) {
-        alert("Anna projektille nimi!");
+
+function renderActiveProject() {
+    const projectId = window.appState?.activeProjectId;
+    if (!projectId) {
+        console.warn('renderActiveProject: ei aktiivista projektia');
         return;
     }
-    const newId = Date.now();
-    const p = {
-        id: newId,
-        name: name,
-        systemType: type,
-        machines: [],
-        ducts: [],
-        valves: [],
-        meta: {},
-        modes: { home:{machines:[],valves:[]}, away:{machines:[],valves:[]}, boost:{machines:[],valves:[]} }
-    };
-    // Lisää rungot automaattisesti tyypin mukaan
-    if(type === 'ahu') {
-        p.ducts.push({ id: 2, name: "Tulo", type: "supply", size: 125 });
-        p.ducts.push({ id: 3, name: "Poisto", type: "extract", size: 125 });
-    }
-    if(type === 'roof') {
-        p.ducts.push({ id: 3, name: "Poisto", type: "extract", size: 125 });
-    }
-    if(type === 'hybrid') {
-        p.ducts.push({ id: 2, name: "Tulo", type: "supply", size: 125 });
-        p.ducts.push({ id: 3, name: "Poisto", type: "extract", size: 125 });
-    }
-    projects.push(p);
-    saveData();
-    closeModal();
-    renderProjects();
-    openProject(newId);
+
+    console.log('🎯 Renderöidään aktiivinen projekti');
+
+    // 🔑 aina sama näkymä
+    showView('view-details');
+
+    // 🔑 kutsutaan sitä OIKEAA vanhaa näkymää
+    renderDetailsView();
 }
 
-function renderProjects() {
-    const list = document.getElementById('projectsList');
-    if (!list) return;
-    list.innerHTML = projects.map(p => `<div class="list-item" onclick="openProject(${p.id})"><b>${p.name}</b>
-            <button class="list-action-btn" title="Poista projekti" onclick="event.stopPropagation();deleteProject(${p.id})">🗑️</button>
-        </div>`).join('');
-    const noMsg = document.getElementById('noProjectsMsg');
-    if (noMsg) noMsg.style.display = projects.length ? 'none' : 'block';
+
+
+
+function openNewProjectModal() {
+    const modal = document.getElementById('newProjectModal');
+    if (!modal) {
+        alert('Projektimodaalia ei löydy');
+        console.error('newProjectModal puuttuu DOMista');
+        return;
+    }
+    modal.style.display = 'flex';
 }
+
+
+
+
+
+
+
 function initValveSelectors() {
     valveGroups = {};
     valveIdToModelId = {};
@@ -4419,6 +4553,9 @@ document.addEventListener('DOMContentLoaded', () => {
         v.style.display = 'none';
     });
 
+    // 📂 Lataa projektit
+    loadProjectsFromStorage();
+
     // ✅ Näytä aina etusivu aluksi
     const projectsView = document.getElementById('view-projects');
     if (projectsView) {
@@ -4426,12 +4563,8 @@ document.addEventListener('DOMContentLoaded', () => {
         projectsView.style.display = 'block';
     }
 
-    // 📚 Lataa käyttäjän K-kirjasto localStoragesta
-    loadUserKLibrary();
-
-    // 🔁 Migroi vanha K-kirjastodata uuteen valveId-pohjaiseen muotoon
-    migrateUserKLibraryIfNeeded();
-
+    
+    
     // 🔧 Alustukset
     if (typeof initValveSelectors === 'function') {
         initValveSelectors();
@@ -4490,77 +4623,9 @@ function applyButtonStyles(root = document) {
     });
 }
 
-window.openProject = function (id) {
-    activeProjectId = id;
-    const p = projects.find(x => x.id === id);
-    if (!p) return;
 
-    // ✅ Migroi legacy → koneelle heti projektin avauksessa (ei renderissä)
-    // Migroidaan kaikki projektissa olevat modet (tai järkevät oletukset)
-    const modeKeys = Object.keys(p.modes || {});
-    const modesToMigrate = modeKeys.length ? modeKeys : ['home', 'away', 'boost'];
 
-    modesToMigrate.forEach(m => {
-        migrateLegacyValvesToActiveMachine(p, m);
-    });
 
-    renderDetailsList();
-    showView('view-details');
-};
-
-window.showView = function (viewId) {
-    // 1. Piilotetaan kaikki näkymät
-    document.querySelectorAll('.view').forEach(v => {
-        v.classList.remove('active');
-        v.style.display = 'none';
-    });
-
-    // 2. Näytetään kohdenäkymä
-    const target = document.getElementById(viewId);
-    if (target) {
-        target.classList.add('active');
-        target.style.display = 'block';
-        applyButtonStyles(target);
-    }
-
-    // ✅ FAB – aina päivitetään näkymän vaihdossa
-    updateFabVisibility(viewId);
-
-    // 3. Takaisin-nappi
-    const backBtn = document.getElementById('backBtn');
-    if (backBtn) {
-        if (viewId === 'view-projects') {
-            backBtn.style.display = 'none';
-            renderProjects();
-        } else {
-            backBtn.style.display = 'block';
-
-            if (viewId === 'view-visual') {
-                backBtn.onclick = () => showView('view-details');
-            } 
-            else if ([
-                'view-measure',
-                'view-settings',
-                'view-report',
-                'view-add-duct',
-                'view-add-machine'
-            ].includes(viewId)) {
-                backBtn.onclick = () => showView('view-details');
-            } 
-            else {
-                backBtn.onclick = () => showView('view-projects');
-            }
-        }
-    }
-
-    // 4. Näkymäkohtaiset alustukset
-    // 4. Näkymäkohtaiset alustukset
-if (viewId === 'view-details') {
-    renderDetailsList();
-    refreshMeasurementInputList();
-}
-
-};
 
 
 // --- UUSI PROJEKTIN PÄÄNÄKYMÄ (SISÄLTÄÄ TILOJEN VALINNAN) ---
@@ -4611,26 +4676,20 @@ function updateProjectMeta(field, value) {
 function promoteDraftIfNeeded(duct, v) {
     if (!v.__isDraft) return false;
 
-    // Jos yhtään kenttää on aloitettu
-    const hasData =
-        (v.room && v.room.trim()) ||
-        (v.type && v.type.trim()) ||
-        (v.pos !== '' && v.pos !== null && v.pos !== undefined) ||
-        (v.flow !== '' && v.flow !== null && v.flow !== undefined) ||
-        (v.target !== '' && v.target !== null && v.target !== undefined) ||
-        (v.measuredP !== '' && v.measuredP !== null && v.measuredP !== undefined);
+    if (v.room || v.type || v.pos != null) {
+        delete v.__isDraft;
 
-    if (!hasData) return false;
+        // 🔑 lisää uusi draft datatasolle
+        if (!duct.valves.some(x => x.__isDraft)) {
+            duct.valves.push(createDraftValve(duct));
+        }
 
-    // 🔓 Promootio
-    v.__isDraft = false;
-    v.id = crypto.randomUUID();
-
-    // ➕ Lisää uusi draft-rivi heti perään
-    duct.valves.push(createDraftValve(duct));
-
-    return true;
+        return true;
+    }
+    return false;
 }
+
+
 
 // --- PÄIVITETTY INLINE-MUOKKAUS (HUONE MUKANA) ---
 // --- PÄIVITETTY INLINE-MUOKKAUS (HUONE MUKANA) ---
@@ -4776,8 +4835,7 @@ window._moveValve = function (valveId, dir) {
         // 🔄 Päivitä mittalista (EI renderDetailsList!)
         const listEl = document.getElementById('measurementList');
         if (listEl && typeof renderMeasurementListV2 === 'function') {
-            renderMeasurementListV2(listEl);
-            refreshMeasurementInputList();
+// ❌ EI renderöintiä täällä
 
         }
 
@@ -4885,6 +4943,125 @@ function searchValveTypes(query) {
     });
 
     return results.slice(0, 15);
+}
+function resolveWorkingKForValve(v) {
+    if (!v) return null;
+
+    // ❌ Ei ehdoteta draftille
+    if (v.__isDraft) return null;
+
+    // ❌ Päätelaite pitää olla tunnistettu
+    if (!v.type || typeof v.type !== 'string') return null;
+
+    // ❌ Avaus pakollinen ja numeerinen
+    const pos = Number(v.pos);
+    if (!isFinite(pos)) return null;
+
+    // 🔑 Selvitetään kirjastohakuun tarvittavat kentät
+    const kind =
+        v.kind ||
+        (v.damper ? 'damper' :
+         v.supply ? 'supply' :
+         v.extract ? 'extract' :
+         'other');
+
+    const model = v.type;
+    const size = v.size || '';
+    const variant = v.variant || '';
+
+    // 🔍 LUETAAN kirjastosta – EI tallenneta
+    const k = klibResolveK({
+        kind,
+        model,
+        size,
+        variant,
+        pos
+    });
+
+    return Number.isFinite(k) ? k : null;
+}
+function canSaveKValue(v) {
+    if (!v) return false;
+
+    if (v.__isDraft) return false;
+    if (!v.type) return false;
+
+    const pos = Number(v.pos);
+    const k = Number(v.kWorking);
+
+    if (!isFinite(pos) || !isFinite(k)) return false;
+
+    if (v.kApproved === true) return false;
+
+    // Ei saa olla jo kirjastossa
+    const existing = klibFindK({
+        kind: v.kind || 'other',
+        model: v.type,
+        size: v.size || '',
+        variant: v.variant || '',
+        pos
+    });
+
+    return !existing;
+}
+function onSaveKClick(v) {
+    if (!canSaveKValue(v)) return;
+
+    confirmSaveKValue({
+        kind: v.kind || 'other',
+        model: v.type,
+        size: v.size || '',
+        variant: v.variant || '',
+        pos: v.pos,
+        k: v.kWorking,
+        note: '',
+        source: 'manual'
+    });
+
+    // Lukitse venttiili
+    v.kApproved = true;
+}
+
+function approveKForValve(v) {
+    if (!v) return;
+    if (v.kWorking == null || v.kWorking === '') return;
+
+    const k = Number(v.kWorking);
+    if (!Number.isFinite(k)) return;
+
+    v.kApproved = k;
+
+    // kun hyväksytään, poistetaan tallennusvihje
+    // (lukko kertoo jatkossa tilan)
+}
+function unapproveKForValve(v) {
+    if (!v) return;
+    v.kApproved = null;
+}
+function openApproveKConfirm(valveId) {
+    const v = findValveById(valveId);
+    if (!v) return;
+
+    if (!confirm('Hyväksytäänkö tämä K-arvo lukituksi venttiilille?')) return;
+
+    approveKForValve(v);
+    refreshMeasurementList();
+}
+
+
+function isKValueNewForValve(v) {
+    if (!v) return false;
+    if (v.kWorking == null || v.kWorking === '') return false;
+
+    // jos kirjastosta löytyy tälle avaukselle sama K → ei ikonia
+    const suggested = resolveWorkingKForValve(v);
+    if (suggested != null && Number(v.kWorking) === Number(suggested)) return false;
+
+    // jos kirjastossa EI ole mitään osumaa (suggested null),
+    // näytetään ikoni vain jos meillä on tyyppi+avaus kunnossa
+    if (!v.type || v.pos == null || v.pos === '') return false;
+
+    return true;
 }
 
 
@@ -5347,7 +5524,8 @@ function openProjectList() {
 }
 
 
-function renderDetailsList() {
+function renderDetailsView() {
+
     
     const p = projects.find(x => x.id === activeProjectId);
     if (!p) return;
@@ -5754,15 +5932,10 @@ if (machine.type === 'ahu') {
 
             <!-- TILAT -->
             <div class="mode-row">
-                <button class="mode-big"
-                    style="background:${currentMode === 'home' ? '#4CAF50' : '#f1f1f1'}; color:${currentMode === 'home' ? '#fff' : '#444'};"
-                    onclick="setMode('home')">🏠 Kotona</button>
-                <button class="mode-big"
-                    style="background:${currentMode === 'away' ? '#4CAF50' : '#f1f1f1'}; color:${currentMode === 'away' ? '#fff' : '#444'};"
-                    onclick="setMode('away')">🏃 Poissa</button>
-                <button class="mode-big"
-                    style="background:${currentMode === 'boost' ? '#4CAF50' : '#f1f1f1'}; color:${currentMode === 'boost' ? '#fff' : '#444'};"
-                    onclick="setMode('boost')">🚀 Tehostus</button>
+                <button class="mode-big" onclick="setMode('home'); openMeasurementView()">🏠 Kotona</button>
+<button class="mode-big" onclick="setMode('away'); openMeasurementView()">🏃 Poissa</button>
+<button class="mode-big" onclick="setMode('boost'); openMeasurementView()">🚀 Tehostus</button>
+
             </div>
 
 <!-- KPI -->
@@ -5865,17 +6038,18 @@ if (machine.type === 'ahu') {
 
             <!-- TOIMINTONAPIT -->
             <div class="tool-grid">
-            <button class="tool-btn"
-        style="background:#ede7f6;border-color:#7e57c2;color:#4a148c;"
-        onclick="openKLibraryModal()">
-    📚 K-kirjasto
-</button>
+            
 
                 <button class="tool-btn" style="background:#e3f2fd; border-color:#2196f3; color:#0d47a1;" onclick="showVisual()">🗺️ Avaa Kartta</button>
                 <button class="tool-btn" style="background:#e8f5e9; border-color:#4caf50; color:#1b5e20;" onclick="openValvePanel(null)"
 >➕ Lisää Venttiili</button>
                 <button class="tool-btn" onclick="openCreateAptAHUModal()">🏢 Asunnot</button>
                 <button class="tool-btn" onclick="showReportExcelStyle()">📄 Pöytäkirjat</button>
+                <button class="btn btn-secondary"
+        onclick="openKLibraryAdmin()">
+    📚 K-kirjasto
+</button>
+
                 <button class="tool-btn" onclick="shareProjectData()">📤 Jaa</button>
                 
 
@@ -5897,7 +6071,6 @@ if (machine.type === 'ahu') {
 <h4 style="margin-top:16px; border-bottom:1px dashed #ddd; padding-bottom:5px; font-size:13px;">
     Nopea mittalista (syöttö)
 </h4>
-<div id="measurementInputList" style="margin-top:6px;"></div>
 
 
         
@@ -5922,9 +6095,13 @@ updateWorkflowHint(p);
 // 🎨 Värit peruuta / sulje / takaisin -napeille
 applyCancelButtonStyles(document);
 // ✅ Päivitä myös syöttömittalista aina kun details renderöidään
-try { refreshMeasurementInputList(); } catch (e) {}
 
 }
+function goBackToProjects() {
+    window.appState.activeProjectId = null;
+    showView('view-projects');
+}
+
 // ⚖️ SUHTEELLINEN SÄÄTÖ – analyysi (EI muuta dataa)
 function analyzeRelativeAdjustment(p, mode = 'home') {
     if (!p?.modes?.[mode]) return null;
@@ -6252,7 +6429,6 @@ function setWorkflowHint(text) {
     if (el) el.innerHTML = text;
 }
 
-function duplicateValve(index, e) { e.stopPropagation(); const count = prompt("Montako kopiota luodaan?", "1"); if(count && !isNaN(count)) { const p = projects.find(x => x.id === activeProjectId); const original = p.valves[index]; for(let i=0; i<parseInt(count); i++) { const copy = JSON.parse(JSON.stringify(original)); const numMatch = copy.room.match(/\d+$/); if(numMatch) { const nextNum = parseInt(numMatch[0]) + 1 + i; copy.room = copy.room.replace(/\d+$/, nextNum); } else { copy.room += ` (kopio ${i+1})`; } p.valves.push(copy); } saveData(); renderDetailsList(); } }
 
 function previewPhoto() { const file = document.getElementById('valvePhotoInput').files[0]; const preview = document.getElementById('valvePhotoPreview'); if (file) { const reader = new FileReader(); reader.onloadend = function() { const img = new Image(); img.src = reader.result; img.onload = function() { const canvas = document.createElement('canvas'); const ctx = canvas.getContext('2d'); const MAX_WIDTH = 300; const scaleSize = MAX_WIDTH / img.width; canvas.width = MAX_WIDTH; canvas.height = img.height * scaleSize; ctx.drawImage(img, 0, 0, canvas.width, canvas.height); currentPhotoData = canvas.toDataURL('image/jpeg', 0.7); preview.src = currentPhotoData; preview.style.display = 'block'; } }; reader.readAsDataURL(file); } else { preview.src = ""; preview.style.display = 'none'; currentPhotoData = null; } }
 
@@ -6497,7 +6673,6 @@ function saveSettings() {
     showView('view-details');
     renderDetailsList(); // Päivitä etusivu
 }
-function addDuctFromVisual(type) { const p = projects.find(x => x.id === activeProjectId); const count = p.ducts.filter(d => d.type === type).length + 1; const prefix = type === 'supply' ? 'Tulo' : 'Poisto'; p.ducts.push({ id: Date.now(), type, name: `${prefix} ${count}`, flow: 0, size: 125 }); saveData(); renderVisualDOM(); drawPipes(); }
 
 function deleteDuctFromVisual(id, e) { 
     if(e) e.stopPropagation(); 
@@ -6626,54 +6801,49 @@ function showAddDuct() {
 }
 
 
-function saveDuct() { 
-    const p = projects.find(x => x.id === activeProjectId);
-    if (!p) return;
-    if (!p.ducts) p.ducts = [];
-    const nameVal = document.getElementById('ductName').value;
-    const typeVal = document.getElementById('ductType').value;
-    const sizeVal = document.getElementById('ductSize').value;
-    // Ryhmä: mihin kanavistoon runko lisätään (AHU tulo/poisto vs Huippuimuri poistoon)
-    const groupEl = document.getElementById('ductGroup');
-    let groupVal = groupEl ? groupEl.value : null;
-    if (!groupVal) {
-        const sel = prompt("Valitse kanavisto: kirjoita 'ahu' (Tulo/Poisto) tai 'roof' (Huippuimuri)", "ahu");
-        if (sel === null) return;
-        groupVal = (sel||'').toLowerCase()==='roof' ? 'roof' : 'ahu';
-    }
-    if (!nameVal) {
-        alert("Anna rungolle nimi!");
-        return;
-    }
-    const newDuct = { 
-         id: Date.now(), 
-         name: nameVal, 
-         type: typeVal, 
-         size: sizeVal,
-         group: groupVal 
-    };
-    p.ducts.push(newDuct);
-    saveData(); 
-    showView('view-details'); 
-    renderDetailsList(); 
-}
 
 // --- MODAL HANDLING FOR PROJECT CREATION ---
+// 🔹 Avaa Uusi projekti -modalin
 function showNewProjectModal() {
-    document.getElementById('newProjectModal').style.display = 'flex';
-}
-function closeModal() {
-    // Sulje uuden projektin modal, jos auki
-    const npm = document.getElementById('newProjectModal');
-    if (npm) {
-        npm.style.display = 'none';
-        const n1 = document.getElementById('newProjName'); if(n1) n1.value='';
-        const n2 = document.getElementById('newProjType'); if(n2) n2.value='ahu';
+    const modal = document.getElementById('newProjectModal');
+    if (!modal) {
+        console.error('❌ newProjectModal puuttuu');
+        return;
     }
-    // Sulje generinen overlay-modal, jos auki
-    const ov = document.getElementById('generic-modal-overlay');
-    if (ov) { ov.style.display = 'none'; ov.innerHTML=''; }
+
+    if (modal.parentElement !== document.body) {
+        document.body.appendChild(modal);
+    }
+
+    document.body.classList.add('modal-open');
+
+    modal.style.display = 'flex';
+    modal.classList.add('active');
+
+    console.log('✅ newProjectModal fully interactive');
 }
+
+
+
+function closeModal() {
+    const modal = document.getElementById('newProjectModal');
+    if (!modal) return;
+
+    modal.style.display = 'none';
+    modal.classList.remove('active');
+
+    document.body.classList.remove('modal-open');
+}
+
+
+
+
+// 🔹 Turvallinen projektiluonti
+// 🔒 Turvakutsu HTML-onclickeille
+
+
+
+
 
 // Yleiskäyttöinen modal-avaaja dynaamiselle sisällölle
 function openModal(html) {
@@ -6688,9 +6858,7 @@ function openModal(html) {
     ov.style.display = 'flex';
 }
 
-function saveData() {
-    localStorage.setItem('iv_projects', JSON.stringify(projects));
-}
+
 function migrateLegacyValvesToActiveMachine(p, modeOverride = null) {
     ensureUiState();
 
@@ -6861,14 +7029,10 @@ window.selectMachine = function (id) {
     window.uiState.indexValveId = null;
     window.uiState.indexLocked = false;
 
-    // 🔁 Päivitä ETUSIVU
-    renderDetailsList();
-
-    // 🔁 Päivitä KARTTA, jos auki
-    if (window.activeVisMode === 'horizontal') {
-        renderVisualContent();
-    }
+    // 🔑 AINOA renderöintikutsu
+    renderActiveProject();
 };
+
 
 
 function getMachinesForProject() {
@@ -8191,28 +8355,7 @@ function createBranchHTML(p, duct, colorName){
                                         openModal(html);
                                 }
 
-                                function confirmAddRoofFans(){
-                                        const p = projects.find(x => x.id === activeProjectId);
-                                        if(!p) { closeModal(); return; }
-                                        if(!p.machines) p.machines = [];
-                                        if(!p.ducts) p.ducts = [];
-                                    const start = (document.getElementById('fanStartLetter').value||'A').toUpperCase();
-                                        const count = Math.max(1, parseInt(document.getElementById('fanCount').value||'1'));
-                                    const alph = getFinnishAlphabet();
-                                    let idx = alph.indexOf(start); if(idx<0) idx = 0;
-                                    for(let i=0;i<count;i++){
-                                        const letter = alph[(idx + i) % alph.length];
-                                                const name = `${letter} Rappu Poisto`;
-                                                // Luo huippuimuri laite
-                                                p.machines.push({ name: `Huippuimuri ${letter}`, type: 'roof_fan', speed: '1' });
-                                                // Luo kattopoiston runko, jos puuttuu
-                                                const exists = (p.ducts||[]).some(d=> d.group==='roof' && d.type==='extract' && (d.name||'').toUpperCase().startsWith(letter));
-                                                if(!exists){ p.ducts.push({ id: genId(), name, type: 'extract', group: 'roof', size: 160, flow: 0 }); }
-                                        }
-                                        saveData();
- closeModal(); renderVisualContent();
-                                }
-
+                               
                 // Palaa aktiiviseen projektiin
                 function getCurrentProject(){
                     return (projects||[]).find(x => x.id === activeProjectId);
@@ -8247,28 +8390,7 @@ function createBranchHTML(p, duct, colorName){
                         </div>`;
                     openModal(html);
                 }
-                function confirmCreateAptAHU(){
-                    const p = projects.find(x => x.id === activeProjectId); if(!p){ closeModal(); return; }
-                    const rappu = (document.getElementById('aptRappuKH')?.value||'A').toUpperCase();
-                    const startFloor = parseInt(document.getElementById('aptStartFloorKH')?.value||'1',10);
-                    const floorCount = Math.max(1, parseInt(document.getElementById('aptFloorCountKH')?.value||'1',10));
-                    const perFloor = Math.max(1, parseInt(document.getElementById('aptPerFloorKH')?.value||'1',10));
-                    if(!p.meta) p.meta={}; if(!p.meta.floorMap) p.meta.floorMap={};
-                    for(let f=0; f<floorCount; f++){
-                        const floor = startFloor + f;
-                        for(let i=1; i<=perFloor; i++){
-                            const aptCode = `${rappu}${floor}${i}`;
-                            // Create per-apartment AHU ducts and machine
-                            const supId = genId(), extId = genId();
-                            p.ducts.push({ id: supId, type: 'supply', name: `Tulo ${aptCode}`, size: 125, group:'apt', apartment: aptCode });
-                            p.ducts.push({ id: extId, type: 'extract', name: `Poisto ${aptCode}`, size: 125, group:'apt', apartment: aptCode });
-                            p.machines.push({ type:'ahu', name:`IV-Kone ${aptCode}`, supPct:50, extPct:50, apartment: aptCode });
-                            p.meta.floorMap[aptCode] = floor;
-                        }
-                    }
-                    saveData();
- closeModal(); renderVisualContent();
-                }
+                
 
                 function returnToKerrostalo(){ activeApartmentId = null; setVisualMode('vertical'); renderVisualContent(); }
 
@@ -8303,28 +8425,7 @@ function createBranchHTML(p, duct, colorName){
                                         openModal(html);
                                 }
 
-                                function confirmAddAptsForFan(){
-                                        const p = projects.find(x => x.id === activeProjectId); if(!p) { closeModal(); return; }
-                                        const rap = (document.getElementById('aptFanRappu')?.value||'').toUpperCase();
-                                        const startFloor = parseInt(document.getElementById('aptStartFloor')?.value||'1',10);
-                                        const floorCount = Math.max(1, parseInt(document.getElementById('aptFloorCount')?.value||'1',10));
-                                        const perFloor = Math.max(1, parseInt(document.getElementById('aptPerFloorCount')?.value||'1',10));
-                                        const duct = (p.ducts||[]).find(d=> d.group==='roof' && d.type==='extract' && (d.name||'').toUpperCase().startsWith(rap));
-                                        if(!duct){ alert('Valittu rappu puuttuu.'); return; }
-                                        p.valves = p.valves||[];
-                                        if(!p.meta) p.meta={}; if(!p.meta.floorMap) p.meta.floorMap={};
-                                        for(let f=0; f<floorCount; f++){
-                                            const floor = startFloor + f;
-                                            for(let i=1; i<=perFloor; i++){
-                                                const apt = `${rap}${floor}${i}`;
-                                                p.valves.push({ id: genId(), parentDuctId: duct.id, apartment: apt, room: 'Asunto', flow: 0, target: 0 });
-                                                p.meta.floorMap[apt] = floor;
-                                            }
-                                        }
-                                        saveData();
- closeModal(); renderVisualContent();
-                                }
-
+                               
                 function openCreateRaputModal(){
                     const p = getCurrentProject();
                     const existingLetters = (p.ducts||[]).filter(d=>d.group==='roof').map(d=>{
@@ -8360,26 +8461,7 @@ function createBranchHTML(p, duct, colorName){
                     return alph[(idx>=0 && idx<alph.length-1) ? idx+1 : 0];
                 }
 
-                function confirmCreateRaput(){
-                    const p = getCurrentProject();
-                    const start = (document.getElementById('rapuStartLetter').value||'A').toUpperCase();
-                    const count = Math.max(1, parseInt(document.getElementById('rapuCount').value||'1'));
-                    const alph = getFinnishAlphabet();
-                    let idx = alph.indexOf(start); if(idx<0) idx = 0;
-                    for(let i=0;i<count;i++){
-                        const letter = alph[(idx + i) % alph.length];
-                        const name = `${letter} Rappu Poisto`;
-                        // Skip if exists (roof extract with same letter)
-                        if((p.ducts||[]).some(d=> (d.group==='roof' && d.type==='extract') && ((d.name||'').toUpperCase().startsWith(letter)))){
-                            continue;
-                        }
-                        const newDuct = { id: genId(), group:'roof', type:'extract', name, size:160, flow:0, valves:[] };
-                        p.ducts = p.ducts || []; p.ducts.push(newDuct);
-                    }
-                    saveData();
- closeModal(); renderVisualContent();
-                }
-
+               
                 function renameRappu(ductId){
                     const p = getCurrentProject();
                     const d = (p.ducts||[]).find(x=>x.id===ductId);
@@ -8439,100 +8521,7 @@ function createBranchHTML(p, duct, colorName){
                     try{ if(preselectDst){ const dstSel = document.getElementById('copyDstRappu'); if(dstSel) dstSel.value = preselectDst; } }catch(e){}
                 }
                 function closeCopyRappuModal(){ const el=document.getElementById('copy-rappu-modal'); if(el){ el.style.display='none'; el.innerHTML=''; } }
-                function confirmCopyRappu(){
-                    const p = projects.find(x => x.id === activeProjectId); if(!p) return;
-                    const src = (document.getElementById('copySrcRappu')?.value||'').toUpperCase();
-                    const floor = parseInt(document.getElementById('aptFloor')?.value||'1');
-                    const count = Math.max(1, parseInt(document.getElementById('aptCount')?.value||'1'));
-                    const ductSrc = ducts.find(d=> (d.group==='roof' && d.type==='extract') && (d.name||'').toUpperCase().startsWith(src));
-                    let ductDst = ducts.find(d=> (d.group==='roof' && d.type==='extract') && (d.name||'').toUpperCase().startsWith(dst));
-                    if(!ductDst){ const id = Date.now(); ducts.push({ id, name: `${dst} Rappu Poisto`, type:'extract', group:'roof', size:160, flow:0 }); ductDst = ducts.find(d=>d.id===id); }
-                    if(!ductSrc || !ductDst){ alert('Rappua ei löytynyt. Lisää rungot ensin.'); return; }
-                    for(let i=1; i<=count; i++){
-                        const apt = `${rap}${floor}${i}`;
-                        p.valves.push({ id: genId(), parentDuctId: duct.id, apartment: apt, room: 'Asunto', flow: 0, target: 0 });
-                        p.meta.floorMap[apt] = floor;
-                    }
-                    // Manual per-duct order support with fallback to sort key
-                    ensureValveOrder(p, duct.id, valves);
-                    const order = (p.meta && p.meta.valveOrder && p.meta.valveOrder[duct.id]) || [];
-                    const mapIndex = v => p.valves.indexOf(v);
-                    valves = valves.slice().sort((a,b)=>{
-                        const ia = order.indexOf(mapIndex(a));
-                        const ib = order.indexOf(mapIndex(b));
-                        if (ia !== -1 && ib !== -1) return ia - ib;
-                        // Fallback to global sort if missing
-                        const mode = window._valveSortKey || 'room';
-                        if (mode === 'room') return (a.room||'').localeCompare(b.room||'');
-                        if (mode === 'flow') return (parseFloat(a.flow)||0) - (parseFloat(b.flow)||0);
-                        if (mode === 'pos') return (parseFloat(a.pos)||0) - (parseFloat(b.pos)||0);
-                        const ax = (a.apartment||''); const bx = (b.apartment||'');
-                        const an = parseInt(ax.replace(/[^0-9]/g,''),10)||0; const bn = parseInt(bx.replace(/[^0-9]/g,''),10)||0;
-                        const al = (ax.match(/^[A-Za-z]+/)||[''])[0]; const bl = (bx.match(/^[A-Za-z]+/)||[''])[0];
-                        return al.localeCompare(bl) || an - bn;
-                    });
-                    const colorHex = colorName === 'blue' ? '#2196F3' : '#e91e63';
-                    const grad = colorName === 'blue' ? 'linear-gradient(90deg, #2196F3, #64b5f6)' : 'linear-gradient(90deg, #e91e63, #f48fb1)';
-
-                    const sumFlow = valves.reduce((acc, v) => acc + (parseFloat(v.flow)||0), 0).toFixed(1);
-                    const paValues = valves.map(v => parseFloat(v.measuredP)).filter(x => !isNaN(x));
-                    const paMin = paValues.length ? Math.min(...paValues).toFixed(1) : '-';
-                    const paMax = paValues.length ? Math.max(...paValues).toFixed(1) : '-';
-
-                    // Render taps along one horizontal pipe, evenly spaced side-by-side
-                    const valveCount = Math.max(1, valves.length);
-                    // Näytä vaakanäkymässä vain rungolle lisätyt venttiilit (ei kerrostaloasuntojen)
-                    const valvesHTML = valves.filter(v => v.parentDuctId === duct.id && !v.apartment).map((v, i) => {
-                        const idx = p.valves.indexOf(v);
-                        const flow = parseFloat(v.flow)||0;
-                        const pos = (v.pos !== undefined && v.pos !== null) ? v.pos : '-';
-                        const pa = (v.measuredP !== undefined && v.measuredP !== null) ? v.measuredP : '-';
-                        const room = v.room || 'Huone';
-                        const target = (parseFloat(v.target)||0);
-                        const hasMeasurement = target>0 && flow>0;
-                        const diff = Math.abs(flow - target);
-                        const status = !hasMeasurement ? 'none' : (diff/target < 0.10 ? 'ok' : 'err');
-                        const leftPct = ((i+1)/(valveCount+1))*100;
-                        return `<div class="tap ${status}" style="left:${leftPct}%" onclick="event.stopPropagation();openValvePanel(${idx})">
-                                    <div class="tap-label">
-                                        <b>${room}</b> • ${flow.toFixed(1)} l/s${target?` / ${target}`:''}${pa!=='-'?` • ${pa} Pa`:''}${pos!=='-'?` • Avaus ${Math.round(pos)}`:''}
-                                        <button class="list-action-btn" title="Siirrä vasemmalle" style="margin-left:6px; font-size:14px; color:#666;" onclick="event.stopPropagation();moveValveInDuct(${duct.id}, ${idx}, -1)">◀</button>
-                                        <button class="list-action-btn" title="Siirrä oikealle" style="margin-left:2px; font-size:14px; color:#666;" onclick="event.stopPropagation();moveValveInDuct(${duct.id}, ${idx}, 1)">▶</button>
-                                        <button class="list-action-btn" title="Poista venttiili" style="margin-left:6px; font-size:14px; color:#bbb;" onclick="event.stopPropagation();deleteValveByIndex(${idx})">🗑️</button>
-                                        <button class="list-action-btn" title="Lisää vaihtoehdot" style="margin-left:6px; font-size:14px; color:#999;" onclick="event.stopPropagation();showValveMenu(${idx})">⋮</button>
-                                    </div>
-                                </div>`;
-                    }).join('');
-
-                    return `
-                        <div class="ahu-branch" style="border-left: 4px solid ${colorHex};">
-                            <span class="branch-connector" style="background:${grad};"></span>
-                            <h4 style="color:${colorHex}; cursor:pointer;" onclick="event.stopPropagation();editDuctInline(${duct.id})">
-                                ${duct.name} <span style="font-weight:normal; color:#888;">(${duct.size})</span>
-                                <span style="margin-left:8px; font-weight:normal; color:#666;">= mitattu: ${(duct.flow||0).toFixed ? (duct.flow||0).toFixed(1) : (parseFloat(duct.flow)||0).toFixed(1)} l/s</span>
-                                <button class="list-action-btn" title="Poista runko" style="float:right; font-size:14px; color:#bbb;" onclick="event.stopPropagation();deleteDuctFromVisual(${duct.id}, event)">🗑️</button>
-                                <button class="list-action-btn" title="Lisää venttiili tähän runkoon" style="float:right; font-size:14px; color:${colorHex}; margin-right:8px;" onclick="event.stopPropagation();quickAddValveToDuct(${duct.id})">+ Lisää venttiili</button>
-                                <button class="list-action-btn" title="Lisää asunto (massa)" style="float:right; font-size:14px; color:${colorHex}; margin-right:8px;" onclick="event.stopPropagation();openAddApartmentModal()">+ Lisää asunto</button>
-                                <button class="list-action-btn" title="Nimeä runko uudelleen" style="float:right; font-size:14px; color:#666; margin-right:8px;" onclick="event.stopPropagation();renameRappu(${duct.id})">✏️ Nimeä uudelleen</button>
-                            </h4>
-                            ${window._editingDuctId===duct.id?`
-                            <div class="duct-edit-box" style="background:#fafafa; border:1px solid #ddd; border-radius:6px; padding:10px; margin:6px 0 10px 0;">
-                                <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-                                    <label style="color:#444;">Rungon koko (mm)
-                                        <input id="duct-size-${duct.id}" type="number" min="50" step="10" value="${duct.size!==undefined?duct.size:''}" style="margin-left:6px; width:90px; padding:4px 6px;">
-                                    </label>
-                                    <label style="color:#444;">Mitattu virtaus (l/s)
-                                        <input id="duct-flow-${duct.id}" type="number" min="0" step="0.1" value="${duct.flow!==undefined?duct.flow:''}" style="margin-left:6px; width:110px; padding:4px 6px;">
-                                    </label>
-                                    <span style="flex:1 1 auto;"></span>
-                                    <button class="list-action-btn" style="background:#1976d2; color:#fff; padding:6px 10px; border-radius:4px;" onclick="event.stopPropagation();saveDuctInline(${duct.id})">Tallenna</button>
-                                    <button class="list-action-btn" style="background:#eee; color:#444; padding:6px 10px; border-radius:4px;" onclick="event.stopPropagation();cancelDuctInline()">Peruuta</button>
-                                </div>
-                            </div>`:''}
-                            <div class="branch-summary">= l/s: ${sumFlow} • Pa: ${paMin}…${paMax} • Venttiilejä: ${valves.length}</div>
-                            ${valves.filter(v => v.parentDuctId === duct.id && !v.apartment).length?`<div class=\"branch-pipe\" style=\"background:${colorName==='blue'?'#64b5f6':'#f48fb1'};\">${valvesHTML}</div>`:'<span style="font-size:10px; color:#ccc;">Tyhjä</span>'}
-                        </div>`;
-                }
+                
                 function getValveLockReason(v, analysis) {
                     if (!analysis) return 'Analyysi puuttuu';
                 
@@ -8605,147 +8594,10 @@ function createBranchHTML(p, duct, colorName){
                 
                     return null;
                 }
-   function openKLibraryModal() {
-    ensureUserKLibraryReady();
 
-    let ov = document.getElementById('k-lib-overlay');
-    if (!ov) {
-        ov = document.createElement('div');
-        ov.id = 'k-lib-overlay';
-        ov.className = 'modal-overlay';
-        document.body.appendChild(ov);
-    }
 
-    ov.innerHTML = `
-        <div class="modal" style="max-width:600px;">
-            <div class="modal-header">📚 K-kirjasto</div>
 
-            <div class="modal-content">
-                <button class="k-lib-category-btn" onclick="openKCategory('supply')">
-    Tulo (${window.userKLibrary.supply.length})
-</button>
 
-<button class="k-lib-category-btn" onclick="openKCategory('extract')">
-    Poisto (${window.userKLibrary.extract.length})
-</button>
-
-<button class="k-lib-category-btn" onclick="openKCategory('damper')">
-    Säätöpellit (${window.userKLibrary.damper.length})
-</button>
-
-<button class="k-lib-category-btn" onclick="openKCategory('other')">
-    Muut (${window.userKLibrary.other.length})
-</button>
-
-            </div>
-
-            <div class="modal-actions">
-                <button class="btn" onclick="closeKLibraryModal()">Sulje</button>
-            </div>
-        </div>
-    `;
-
-    ov.style.display = 'flex';
-}
-
-function openKLibraryPicker() {
-    ensureUserKLibraryReady();
-
-    // haetaan nykyiset valinnat
-    const valveType = document.getElementById('valveType')?.value;
-    const type =
-        valveType === 'supply' ? 'supply' :
-        valveType === 'extract' ? 'extract' :
-        null;
-
-    const size = Number(
-        document.getElementById('valveSizeSelect')?.value
-    );
-
-    if (!type) {
-        alert('Valitse ensin tulo tai poisto');
-        return;
-    }
-    if (!size) {
-        alert('Valitse ensin venttiilin koko');
-        return;
-    }
-
-    // suodata kirjasto
-    const matches = window.userKLibrary[type]
-        .filter(r => Number(r.size) === size);
-
-    let ov = document.getElementById('k-picker-overlay');
-    if (!ov) {
-        ov = document.createElement('div');
-        ov.id = 'k-picker-overlay';
-        ov.className = 'modal-overlay';
-        document.body.appendChild(ov);
-    }
-
-    ov.innerHTML = `
-        <div class="modal" style="max-width:700px;">
-            <div class="modal-header">
-                ${type === 'supply' ? 'Tuloventtiilit' : 'Poistoventtiilit'} Ø${size}
-            </div>
-
-            <div class="modal-content">
-                ${
-                    matches.length === 0
-                    ? `<div style="color:#777;padding:10px;">
-                           Ei tallennettuja K-arvoja tälle koolle
-                       </div>`
-                    : `
-                    <table class="report">
-                        <thead>
-                            <tr>
-                                <th>Malli</th>
-                                <th>Avaus</th>
-                                <th>K</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${matches.map((r,i)=>`
-                                <tr onclick="selectKFromLibrary('${type}', ${size}, ${i})"
-                                    style="cursor:pointer;">
-                                    <td>${r.model || '—'}</td>
-                                    <td>${r.opening}</td>
-                                    <td>${r.k}</td>
-                                </tr>
-                            `).join('')}
-                        </tbody>
-                    </table>
-                    `
-                }
-            </div>
-
-            <div class="modal-actions">
-                <button class="btn" onclick="closeKLibraryPicker()">Sulje</button>
-            </div>
-        </div>
-    `;
-
-    ov.style.display = 'flex';
-}
-function selectKFromLibrary(type, size, idx) {
-    const list = window.userKLibrary[type]
-        .filter(r => Number(r.size) === size);
-
-    const item = list[idx];
-    if (!item) return;
-
-    // täytä K-arvo
-    const kInput = document.getElementById('manualK');
-    if (kInput) kInput.value = item.k;
-
-    // halutessa myös avaus:
-    const openingInput = document.getElementById('valveOpening');
-    if (openingInput && item.opening != null) {
-        openingInput.value = item.opening;
-    }
-
-    closeKLibraryPicker();
-}
 
 function closeKLibraryPicker() {
     const ov = document.getElementById('k-picker-overlay');
@@ -8768,284 +8620,11 @@ function deleteUserKEntry(key, idx) {
 
     openKLibraryModal(); // päivitä näkymä
 }
-function closeKLibraryModal() {
-    const ov = document.getElementById('k-lib-overlay');
-    if (!ov) return;
-    ov.style.display = 'none';
-}
-function openKCategory(type) {
-    window.uiState.activeKLibraryType = type;
 
-    ensureUserKLibraryReady();
 
-    const arr = Array.isArray(window.userKLibrary?.[type])
-        ? window.userKLibrary[type]
-        : [];
 
-    // Ryhmittele venttiileittäin: (malli + koko)
-    const groups = {};
-    arr.forEach((r, idx) => {
-        const model = String(r.model || '—').trim() || '—';
-        const size = Number(r.size) || 0;
-        const key = `${model}__${size}`;
-        if (!groups[key]) {
-            groups[key] = { model, size, indices: [] };
-        }
-        groups[key].indices.push(idx);
-    });
 
-    const groupList = Object.values(groups)
-        .sort((a, b) => (a.size - b.size) || a.model.localeCompare(b.model));
 
-    let ov = document.getElementById('k-cat-overlay');
-    if (!ov) {
-        ov = document.createElement('div');
-        ov.id = 'k-cat-overlay';
-        ov.className = 'modal-overlay';
-        document.body.appendChild(ov);
-    }
-
-    const title =
-        type === 'supply' ? 'Tuloventtiilit' :
-        type === 'extract' ? 'Poistoventtiilit' :
-        type === 'damper' ? 'Säätöpellit' :
-        'Muut';
-
-    ov.innerHTML = `
-        <div class="modal" style="max-width:820px;">
-            <div class="modal-header">${title}</div>
-
-            <div class="modal-content">
-
-                <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">
-                    <input id="k-lib-search" class="input input-sm"
-                        placeholder="Hae (malli / koko)…"
-                        style="flex:1; min-width:220px;"
-                        oninput="renderKCategoryGroupedList('${type}')"
-                    />
-                    <div style="font-size:12px; color:#666;">
-                        Venttiilejä: <b>${groupList.length}</b> • Rivejä: <b>${arr.length}</b>
-                    </div>
-                </div>
-
-                <div id="k-cat-grouped-list"></div>
-
-            </div>
-
-            <div class="modal-actions">
-                <button class="btn btn-primary" onclick="openAddKModal('${type}')">➕ Lisää</button>
-                <button class="btn" onclick="closeKCategory()">Sulje</button>
-            </div>
-        </div>
-    `;
-
-    ov.style.display = 'flex';
-
-    // Renderöi lista ensimmäisen kerran
-    renderKCategoryGroupedList(type);
-}
-function renderKCategoryGroupedList(type) {
-    ensureUserKLibraryReady();
-
-    const listEl = document.getElementById('k-cat-grouped-list');
-    if (!listEl) return;
-
-    const arr = Array.isArray(window.userKLibrary?.[type])
-        ? window.userKLibrary[type]
-        : [];
-
-    const q = String(document.getElementById('k-lib-search')?.value || '')
-        .trim()
-        .toLowerCase();
-
-    // 🔧 RYHMITTELY: CASE-INSENSITIVE
-    const groups = {};
-    arr.forEach((r, idx) => {
-        const rawModel = String(r.model || '—').trim();
-        const normModel = rawModel.toUpperCase(); // 🔑
-        const size = Number(r.size) || 0;
-        const key = `${normModel}__${size}`;
-
-        if (!groups[key]) {
-            groups[key] = {
-                displayModel: rawModel, // säilytä alkuperäinen
-                normModel,
-                size,
-                indices: []
-            };
-        }
-        groups[key].indices.push(idx);
-    });
-
-    let groupList = Object.values(groups)
-        .sort((a, b) => (a.size - b.size) || a.normModel.localeCompare(b.normModel));
-
-    // 🔍 Haku
-    if (q) {
-        groupList = groupList.filter(g =>
-            `${g.displayModel} ${g.size}`.toLowerCase().includes(q)
-        );
-    }
-
-    if (groupList.length === 0) {
-        listEl.innerHTML = `<div style="color:#777; padding:8px;">Ei osumia.</div>`;
-        return;
-    }
-
-    listEl.innerHTML = `
-        <div style="display:flex; flex-direction:column; gap:8px;">
-            ${groupList.map(g => `
-                <div
-                    style="
-                        border:1px solid #e0e0e0;
-                        border-radius:10px;
-                        padding:10px;
-                        display:flex;
-                        align-items:center;
-                        justify-content:space-between;
-                        background:#fff;
-                    "
-                >
-                    <div>
-                        <div style="font-weight:700;">
-                            ${escapeHtml(g.displayModel)} ${g.size ? `Ø${g.size}` : ''}
-                        </div>
-                        <div style="font-size:12px; color:#666;">
-                            Tallennettuja rivejä: ${g.indices.length}
-                        </div>
-                    </div>
-
-                   <div style="display:flex; gap:6px;">
-    <button class="btn btn-success btn-xs"
-        onclick="openValveById(buildValveId({
-            type: '${type}',
-            model: '${g.normModel}',
-            size: ${Number(g.size)}
-        }))">
-        Avaa
-    </button>
-</div>
-
-                </div>
-            `).join('')}
-        </div>
-    `;
-}
-
-function openKValveDetailModal(type, model, size) {
-    ensureUserKLibraryReady();
-
-    const arr = Array.isArray(window.userKLibrary?.[type])
-        ? window.userKLibrary[type]
-        : [];
-
-    const normModel = String(model || '—').trim().toUpperCase();
-
-    const rows = arr
-        .map((r, idx) => ({
-            ...r,
-            _idx: idx,
-            _normModel: String(r.model || '—').trim().toUpperCase()
-        }))
-        .filter(r =>
-            r._normModel === normModel &&
-            Number(r.size) === Number(size)
-        )
-        .sort((a, b) => Number(a.opening) - Number(b.opening));
-
-    let ov = document.getElementById('k-valve-overlay');
-    if (!ov) {
-        ov = document.createElement('div');
-        ov.id = 'k-valve-overlay';
-        ov.className = 'modal-overlay';
-        document.body.appendChild(ov);
-    }
-
-    const title =
-        `${String(model || '—').trim()} ${size ? `Ø${Number(size)}` : ''}`;
-
-    ov.innerHTML = `
-        <div class="modal k-valve-modal">
-
-            <div class="modal-header">
-                📌 ${escapeHtml(title)}
-                <div style="font-size:12px; color:#666; margin-top:4px;">
-                    Tallennettuja avauksia: ${rows.length}
-                </div>
-            </div>
-
-            <div class="modal-content">
-                ${
-                    rows.length === 0
-                        ? `<div style="color:#777; padding:8px;">Ei tallennettuja avauksia.</div>`
-                        : `
-                        <div style="display:flex; flex-direction:column; gap:10px;">
-                            ${rows.map(r => `
-                                <div
-                                    style="
-                                        border:1px solid #ddd;
-                                        border-radius:10px;
-                                        padding:10px;
-                                        background:#fff;
-                                        display:flex;
-                                        flex-direction:column;
-                                        gap:8px;
-                                    "
-                                >
-                                    <div style="display:flex; justify-content:space-between;">
-                                        <div>
-                                            <div style="font-weight:700;">
-                                                Avaus: ${Number(r.opening)}
-                                            </div>
-                                            <div style="font-size:13px;">
-                                                K-arvo: <b>${Number(r.k).toFixed(2)}</b>
-                                            </div>
-                                        </div>
-                                        <div style="font-size:12px; color:#666;">
-                                            ${escapeHtml(String(r.note || '').trim())}
-                                        </div>
-                                    </div>
-
-                                    <div style="display:flex; gap:6px; flex-wrap:wrap;">
-                                        <button class="btn btn-success btn-xs" style="flex:1;"
-                                            onclick="applyKFromLibraryToActiveValve(${Number(r.opening)}, ${Number(r.k)})">
-                                            ▶️ Käytä
-                                        </button>
-
-                                        <button class="btn btn-edit btn-xs" style="flex:1;"
-                                            onclick="editKEntry('${type}', ${r._idx})">
-                                            ✏️ Muokkaa
-                                        </button>
-
-                                        <button class="btn btn-danger btn-xs" style="flex:1;"
-                                            onclick="deleteKEntry('${type}', ${r._idx})">
-                                            🗑️ Poista
-                                        </button>
-                                    </div>
-                                </div>
-                            `).join('')}
-                        </div>
-                        `
-                }
-            </div>
-
-            <div class="modal-actions" style="display:flex; gap:8px;">
-                <button class="btn btn-primary"
-                    onclick="openAddKForValve('${type}', '${escapeHtml(model)}', ${Number(size)})">
-                    ➕ Lisää
-                </button>
-
-                <button class="btn btn-cancel"
-                    onclick="closeKValveDetailModal()">
-                    ❌ Sulje
-                </button>
-            </div>
-
-        </div>
-    `;
-
-    ov.style.display = 'flex';
-}
 
 
 
@@ -9064,81 +8643,14 @@ function escapeHtml(str) {
         .replaceAll("'", '&#039;');
 }
 
-function editKEntry(type, idx) {
-    const item = window.userKLibrary[type][idx];
-    if (!item) return;
 
-    let ov = document.getElementById('k-edit-overlay');
-    if (!ov) {
-        ov = document.createElement('div');
-        ov.id = 'k-edit-overlay';
-        ov.className = 'modal-overlay';
-        document.body.appendChild(ov);
-    }
-
-    ov.innerHTML = `
-        <div class="modal">
-            <div class="modal-header">✏️ Muokkaa K-arvoa</div>
-
-            <div class="modal-content">
-                <label>Malli
-                    <input id="edit-k-model" value="${item.model || ''}">
-                </label>
-
-                <label>Koko Ø
-                    <input id="edit-k-size" type="number" value="${item.size || ''}">
-                </label>
-
-                <label>Avaus
-                    <input id="edit-k-opening" type="number" step="0.5" value="${item.opening}">
-                </label>
-
-                <label>K-arvo
-                    <input id="edit-k-value" type="number" step="0.01" value="${item.k}">
-                </label>
-            </div>
-
-            <div class="modal-actions">
-                <button class="btn btn-primary" onclick="saveEditedK('${type}', ${idx})">Tallenna</button>
-                <button class="btn btn-danger" onclick="deleteEditedK('${type}', ${idx})">Poista</button>
-                <button class="btn" onclick="closeEditK()">Peruuta</button>
-            </div>
-        </div>
-    `;
-
-    ov.style.display = 'flex';
-}
 
 function closeEditK() {
     const ov = document.getElementById('k-edit-overlay');
     if (ov) ov.style.display = 'none';
 }
-function saveEditedK(type, idx) {
-    const item = window.userKLibrary[type]?.[idx];
-    if (!item) return;
-
-    item.model = document.getElementById('edit-k-model').value.trim();
-    item.size = Number(document.getElementById('edit-k-size').value);
-    item.opening = Number(document.getElementById('edit-k-opening').value);
-    item.k = Number(document.getElementById('edit-k-value').value);
-
-    saveUserKLibrary();
-    closeEditK();
-
-    // 🔁 Päivitä NIMENOMAAN tämä venttiili
-    refreshOpenKValveModal(type, item.model, item.size);
-}
 
 
-function deleteEditedK(type, idx) {
-    const ok = confirm('Poistetaanko tämä K-arvo?');
-    if (!ok) return;
-
-    window.userKLibrary[type].splice(idx, 1);
-    saveUserKLibrary();
-    closeEditK();
-    openKCategory(type);
-}
 
 
 function closeKCategory() {
@@ -9443,22 +8955,36 @@ function showInlineNotice(row, text) {
         note.textContent = '';
     }, 4000);
 }
-function findValveById(project, valveId) {
-    if (!project) return null;
+function findValveById(id) {
+    const p = projects.find(x => x.id === activeProjectId);
+    if (!p) return null;
+    const m = getActiveMachine(p);
+    if (!m) return null;
 
-    for (const m of project.machines || []) {
-        for (const modeKey in m.modes || {}) {
-            const mm = m.modes[modeKey];
-            for (const d of mm.ducts || []) {
-                const v = (d.valves || []).find(x => String(x.id) === String(valveId));
-                if (v) {
-                    return { valve: v, duct: d, machine: m, mode: modeKey };
-                }
-            }
+    const mode = window.currentMode || 'home';
+    const ducts = m.modes?.[mode]?.ducts || [];
+    for (const d of ducts) {
+        for (const v of d.valves || []) {
+            if (String(v.id) === String(id)) return v;
         }
     }
     return null;
 }
+
+function refreshMeasurementList() {
+    renderActiveProject();
+}
+
+function openUnlockKConfirm(valveId) {
+    const v = findValveById(valveId);
+    if (!v) return;
+
+    if (!confirm('Poistetaanko K-arvon lukitus?')) return;
+
+    unapproveKForValve(v);
+    refreshMeasurementList();
+}
+
 
 function openValveById(valveId) {
     const p = projects.find(x => x.id === activeProjectId);
@@ -9508,7 +9034,6 @@ function openValvePanel(idx = null, options = {}) {
     const p = projects.find(x => x.id === activeProjectId);
     if (!p) return;
 
-    // 🔁 Varmista analyysi (false-indeksi ym.)
     if (!window._lastAnalyses) {
         const container = document.getElementById('visContent') || document.getElementById('mapContainer');
         if (container && typeof renderHorizontalMap === 'function') {
@@ -9531,7 +9056,6 @@ function openValvePanel(idx = null, options = {}) {
     let parentDuct = null;
     let isNew = false;
 
-    // ========= ETSI OLEMASSA OLEVA VENTTIILI =========
     if (typeof idx === 'string' || typeof idx === 'number') {
         for (const d of ducts) {
             const found = (d.valves || []).find(x => String(x.id) === String(idx));
@@ -9543,13 +9067,15 @@ function openValvePanel(idx = null, options = {}) {
         }
     }
 
-    // ========= UUSI VENTTIILI =========
     if (!v) {
         isNew = true;
+        let parentDuctId = options.parentDuctId || '';
+        if (!parentDuctId && ducts.length) parentDuctId = ducts[0].id;
+
         v = {
-            id: Date.now(),
+            id: crypto?.randomUUID ? crypto.randomUUID() : String(Date.now()),
             room: '',
-            parentDuctId: options.parentDuctId || '',
+            parentDuctId,
             type: '',
             flowType: '',
             pos: null,
@@ -9561,31 +9087,56 @@ function openValvePanel(idx = null, options = {}) {
             isIndex: false
         };
 
-        parentDuct = ducts.find(d => String(d.id) === String(v.parentDuctId)) || null;
-        if (!parentDuct) {
-            console.warn('openValvePanel: uutta venttiiliä varten ei löytynyt runkoa');
-        }
-    }
+     parentDuct = ducts.find(d => String(d.id) === String(v.parentDuctId));
+if (!parentDuct) {
 
-    if (!v) {
-        console.warn('openValvePanel: venttiiliä ei löydy, idx=', idx);
+    const create = confirm(
+        'Projektissa ei ole vielä runkoa.\n\n' +
+        'Haluatko luoda rungon nyt, jotta venttiili voidaan lisätä?'
+    );
+
+    if (!create) {
+        // ❌ käyttäjä peruutti oikeasti
         return;
     }
 
+    const supply = confirm(
+        'Valitse rungon tyyppi:\n\n' +
+        'OK = Luo TULOILMAN runko\n' +
+        'Peruuta = Luo POISTOILMAN runko'
+    );
+
+    parentDuct = {
+        id: crypto?.randomUUID ? crypto.randomUUID() : String(Date.now()),
+        name: supply ? 'Tulo – päärunko' : 'Poisto – päärunko',
+        type: supply ? 'supply' : 'extract',
+        valves: []
+    };
+
+    ducts.push(parentDuct);
+
+    v.parentDuctId = parentDuct.id;
+    v.flowType = parentDuct.type;
+}
+
+
+
+        if (!Array.isArray(parentDuct.valves)) parentDuct.valves = [];
+        parentDuct.valves.push(v);
+    }
+
+    if (!v) return;
     window._lastOpenedValveId = v.id;
 
-    // ===== FLOW TYPE RUNGOSTA =====
     if (!v.flowType && v.parentDuctId) {
         const d = ducts.find(x => String(x.id) === String(v.parentDuctId));
         v.flowType = d?.type || '';
     }
 
-    ensureUserKLibraryReady?.();
     if (!valveGroups || !Object.keys(valveGroups).length) {
         initValveSelectors?.();
     }
 
-    // ===== MODAALI =====
     let ov = document.getElementById('valve-modal-overlay');
     if (!ov) {
         ov = document.createElement('div');
@@ -9599,285 +9150,92 @@ function openValvePanel(idx = null, options = {}) {
 
     const modelOptions =
         `<option value="">– valitse –</option>` +
-        Object.keys(valveGroups)
-            .sort()
-            .map(m => `<option value="${m}" ${m === currentModel ? 'selected' : ''}>${m}</option>`)
-            .join('');
+        Object.keys(valveGroups).sort().map(m =>
+            `<option value="${m}" ${m === currentModel ? 'selected' : ''}>${m}</option>`
+        ).join('');
 
     ov.innerHTML = `
         <div class="modal">
-            <div class="modal-header">
-                ${isNew ? '➕ Lisää venttiili' : '✏️ Muokkaa venttiiliä'}
-            </div>
-
+            <div class="modal-header">${isNew ? '➕ Lisää venttiili' : '✏️ Muokkaa venttiiliä'}</div>
             <div class="modal-content">
-                <div class="valve-edit-row">
-
-                    <label>Huone
-                        <input id="valve-room" value="${v.room || ''}">
-                    </label>
-
-                    <label>Runko
-                        <select id="valve-duct"></select>
-                    </label>
-
-                    <label>Malli
-                        <select id="valve-model">${modelOptions}</select>
-                    </label>
-
-                    <label>Koko
-                        <select id="valve-size">
-                            <option value="">– koko –</option>
-                        </select>
-                    </label>
-
-                    <label>Avaus
-                        <input id="valve-pos" type="number" step="0.5" value="${v.pos ?? ''}">
-                    </label>
-
-                    <label>Paine (Pa)
-                        <input id="valve-pa" type="number" value="${v.measuredP ?? ''}">
-                    </label>
-
-                    <label>K-arvo (working)
-    <input id="valve-k" type="number" step="0.01" value="${v.kWorking ?? ''}">
-    <div id="k-hint"
-         style="font-size:11px;color:#555;margin-top:3px;display:none;">
-    </div>
-</label>
-
-
-                    <label>Virtaus (l/s)
-                        <input id="valve-flow" type="number" readonly
-                               style="background:#f5f5f5;font-weight:bold;">
-                    </label>
-
-                    <label>Tavoite (l/s)
-                        <input id="valve-target" type="number" step="0.1" value="${v.target ?? ''}">
-                    </label>
-
-                    <div class="valve-index-row" style="margin-top:8px;">
-                        <label>
-                            <input type="checkbox" id="valve-is-index" ${v.isIndex ? 'checked' : ''}>
-                            Tee tästä indeksiventtiili
-                        </label>
-                    </div>
-
-                </div>
+                <label>K-arvo
+                    <input id="valve-k" type="number" step="0.01" value="${v.kWorking ?? ''}">
+                    <div id="k-hint" style="font-size:11px;margin-top:3px;"></div>
+                </label>
+                <label>Malli <select id="valve-model">${modelOptions}</select></label>
+                <label>Koko <select id="valve-size"><option value="">– koko –</option></select></label>
+                <label>Avaus <input id="valve-pos" type="number" step="0.5" value="${v.pos ?? ''}"></label>
             </div>
-
-            <div class="modal-actions">
-   <button class="btn"
-        onclick="openKLibraryForCurrentValve()">
-    📚 K-kirjasto
-</button>
-
-    <button class="btn btn-primary" id="saveValveBtn">Tallenna</button>
-    <button class="btn" onclick="closeValvePanel()">Peruuta</button>
-</div>
-
         </div>
     `;
 
     ov.style.display = 'flex';
 
-    // ===== ELEMENTIT =====
-    const ductEl   = document.getElementById('valve-duct');
-    const modelEl  = document.getElementById('valve-model');
-    const sizeEl   = document.getElementById('valve-size');
-    const roomEl   = document.getElementById('valve-room');
-    const posEl    = document.getElementById('valve-pos');
-    const paEl     = document.getElementById('valve-pa');
-    const kEl      = document.getElementById('valve-k');
-    const flowEl   = document.getElementById('valve-flow');
-    const targetEl = document.getElementById('valve-target');
-    const indexEl  = document.getElementById('valve-is-index');
-// 🔒 Seurataan onko K:ta muokattu käsin
-let kManuallyEdited = false;
+    const modelEl = document.getElementById('valve-model');
+    const sizeEl  = document.getElementById('valve-size');
+    const posEl   = document.getElementById('valve-pos');
+    const kEl     = document.getElementById('valve-k');
+    const kBadgeEl = document.getElementById('k-hint');
 
-kEl.addEventListener('input', () => {
-    kManuallyEdited = true;
-});
+    let kManuallyEdited = false;
+    let lastKContextKey = null;
 
-// 🔁 Automaattinen K-ehdotus K-kirjastosta
-// 🔁 Automaattinen K-ehdotus K-kirjastosta
-const tryAutoFillK = () => {
-    const model = modelEl.value;
-const size = normalizeValveSize(sizeEl.value);
-    const pos   = parseFloat(posEl.value);
+    function setKBadge(type) {
+        if (!kBadgeEl) return;
+        if (type === 'manual') { kBadgeEl.textContent = '🔒 Manuaalinen K'; }
+        else if (type === 'library') { kBadgeEl.textContent = '📚 K kirjastosta'; }
+        else if (type === 'missing') { kBadgeEl.textContent = '⚠️ K-arvo puuttuu'; }
+        else { kBadgeEl.textContent = ''; }
+    }
 
-    if (!model || !size || !Number.isFinite(pos)) return;
+    function tryAutoFillK() {
+        const model = modelEl.value;
+        const size  = normalizeValveSize(sizeEl.value);
+        const pos   = String(posEl.value);
 
-    const suggestedK = getKFromLibrary({ model, size, pos });
-    if (!Number.isFinite(suggestedK)) return;
+        const ctxKey = `${model}|${size}|${pos}`;
 
-    // Jos käyttäjä on jo syöttänyt K:n, ei kosketa
-    const currentK = parseFloat(kEl.value);
-if (kEl.value !== '' && kEl.value != null) return;
+        if (kManuallyEdited && ctxKey === lastKContextKey) {
+            setKBadge('manual');
+            return;
+        }
 
-    // ✅ Täytetään ehdotettu K
-    kEl.value = suggestedK;
+        if (kManuallyEdited && ctxKey !== lastKContextKey) {
+            kManuallyEdited = false;
+            kEl.value = '';
+        }
 
-    // 🔔 Näytä lähde
-    kEl.oninput = () => {
-    const hint = document.getElementById('k-hint');
-    if (hint) hint.style.display = 'none';
-    calcFlowNow();
-};
+        lastKContextKey = ctxKey;
 
-};
+        const res = resolveKForValveContext({
+            kind: v.flowType,
+            model,
+            size,
+            variant: '',
+            pos
+        });
 
+        if (!res) {
+            kEl.value = '';
+            setKBadge('missing');
+            return;
+        }
 
-    // ===== RUNKO SELECT =====
-    ductEl.innerHTML = '<option value="">– ei valittu –</option>';
-    ducts.forEach(d => {
-        const opt = document.createElement('option');
-        opt.value = d.id;
-        opt.textContent = `${d.type === 'supply' ? '🔵' : '🔴'} ${d.name || 'Runko'}`;
-        if (String(d.id) === String(v.parentDuctId)) opt.selected = true;
-        ductEl.appendChild(opt);
+        kEl.value = res.k;
+        setKBadge('library');
+    }
+
+    kEl.addEventListener('input', () => {
+        kManuallyEdited = true;
+        lastKContextKey = `${modelEl.value}|${normalizeValveSize(sizeEl.value)}|${posEl.value}`;
+        setKBadge('manual');
     });
 
-    // ===== MALLI → KOKO =====
-    modelEl.onchange = () => {
-        sizeEl.innerHTML = `<option value="">– koko –</option>`;
-        const model = modelEl.value;
-        if (!model || !valveGroups[model]) return;
+    modelEl.onchange = tryAutoFillK;
+    sizeEl.onchange  = tryAutoFillK;
+    posEl.oninput    = tryAutoFillK;
 
-        valveGroups[model].forEach(s => {
-            const opt = document.createElement('option');
-            opt.value = s.id;
-            opt.textContent = `Ø${s.size}`;
-            sizeEl.appendChild(opt);
-        });
-    };
-
-    if (currentModel) {
-        modelEl.value = currentModel;
-        modelEl.dispatchEvent(new Event('change'));
-        sizeEl.value = currentSizeId;
-    }
-
-    // ===== VIRTAUSLASKENTA =====
-    const calcFlowNow = () => {
-        const pos = parseFloat(posEl?.value);
-        const pPa = parseFloat(paEl?.value);
-        const type = sizeEl?.value || '';
-        const kManual = parseFloat(kEl?.value);
-
-        if (!flowEl) return;
-
-        if (!Number.isFinite(pPa) || !type) {
-            flowEl.value = '';
-            return;
-        }
-
-        const kFunc = (typeof getK === 'function') ? getK : defaultGetK;
-        const k = Number.isFinite(kManual) ? kManual : kFunc(type, Number.isFinite(pos) ? pos : 0);
-
-        if (!Number.isFinite(k) || k <= 0) {
-            flowEl.value = '';
-            return;
-        }
-
-        const flow = k * Math.sqrt(Math.max(0, pPa));
-        flowEl.value = Number.isFinite(flow) ? flow.toFixed(1) : '';
-    };
-
-    posEl.oninput = () => {
-    tryAutoFillK();
-    calcFlowNow();
-};
-
-paEl.oninput = calcFlowNow;
-
-sizeEl.addEventListener('change', () => {
-    tryAutoFillK();
-    calcFlowNow();
-});
-
-modelEl.addEventListener('change', () => {
-    tryAutoFillK();
-    calcFlowNow();
-});
-
-kEl.oninput = () => {
-    kManuallyEdited = true;
-    calcFlowNow();
-};
-
-
-setTimeout(() => {
-    tryAutoFillK();
-    calcFlowNow();
-}, 0);
-
-    // ===== TALLENNUS =====
-    document.getElementById('saveValveBtn').onclick = () => {
-        v.room = roomEl.value || '';
-        v.parentDuctId = ductEl.value || '';
-        v.type = sizeEl.value || '';
-        v.pos = posEl.value === '' ? null : parseFloat(posEl.value);
-        v.measuredP = paEl.value === '' ? null : parseFloat(paEl.value);
-const newK = kEl.value === '' ? null : parseFloat(kEl.value);
-const oldK = v.kWorking;
-
-if (newK !== oldK && Number.isFinite(newK)) {
-    const ok = confirm(
-        `Olet muuttamassa venttiilin K-arvoa.\n\n` +
-        `Vanha: ${oldK ?? '-'}\n` +
-        `Uusi: ${newK}\n\n` +
-        `Haluatko jatkaa?`
-    );
-
-    if (!ok) {
-        return; // ❌ peruutetaan tallennus
-    }
-
-    v.kWorking = newK;
-
-    const saveToLib = confirm(
-        `Tallennetaanko tämä K-arvo myös K-kirjastoon?\n\n` +
-        `Malli: ${modelEl.value || '-'}\n` +
-        `Koko: ${sizeEl.value || '-'}\n` +
-        `Avaus: ${v.pos ?? '-'}\n` +
-        `K: ${newK}`
-    );
-
-    if (saveToLib) {
-        saveKToLibrary({
-            model: modelEl.value,
-            size: sizeEl.value,
-            pos: v.pos,
-            k: newK
-        });
-    }
-}
-        v.target = targetEl.value === '' ? null : parseFloat(targetEl.value);
-        v.isIndex = indexEl?.checked === true;
-
-        const f = parseFloat(flowEl?.value);
-        v.flow = Number.isFinite(f) ? f : v.flow;
-
-        if (isNew && parentDuct) {
-            parentDuct.valves = parentDuct.valves || [];
-            parentDuct.valves.push(v);
-        }
-// 🔄 Päivitä mittalista varmasti
-const listEl = document.getElementById('measurementList');
-if (listEl && typeof renderMeasurementListV2 === 'function') {
-    renderMeasurementListV2(listEl);
-}
-const inputEl = document.getElementById('measurementInputList');
-if (inputEl && typeof renderMeasurementInputList === 'function') {
-    const p = projects.find(x => x.id === activeProjectId);
-    const m = p ? getActiveMachine(p) : null;
-    if (m) renderMeasurementInputList(m);
-}
-
-        commitValveChanges(v, { mode, triggerRender: true, triggerSave: true });
-        closeValvePanel();
-    };
+    setTimeout(tryAutoFillK, 0);
 }
 
                
@@ -10009,78 +9367,7 @@ function showGenerator() {
 function closeGenerator() {
     document.getElementById('genModal').style.display = 'none';
 }
-function runGenerator() {
-    const p = projects.find(x => x.id === activeProjectId);
-    if (!p) return;
-    const floors = parseInt(document.getElementById('genFloors').value);
-    const aptsPerFloor = parseInt(document.getElementById('genApts').value);
-    let aptNum = parseInt(document.getElementById('genStart').value);
-    const prefix = document.getElementById('genPrefix').value;
-    // Tallenna per-kerros asuntojen määrä projektiin, jotta pystynäkymä tietää rivittää oikein
-    if (!p.meta) p.meta = {};
-    p.meta.aptsPerFloor = aptsPerFloor;
-    // Etsi RAPPU-kohtainen poistokanava (prefix), luo jos puuttuu
-    let extObj = (p.ducts||[]).find(d => d.type === 'extract' && (d.group==='roof') && (d.name||'').toUpperCase().startsWith((prefix||'').toUpperCase()));
-    if (!extObj) {
-        extObj = { id: Date.now()+Math.floor(Math.random()*1000), type: 'extract', name: `${prefix}-Rappu Poisto`, size: 125, group: 'roof' };
-        if (!p.ducts) p.ducts = [];
-        p.ducts.push(extObj);
-    }
-    let extDuct = extObj.id || "";
-    let supDuct = p.ducts.find(d => d.type === 'supply' && d.group==='ahu')?.id || "";
-    // Varoitus jos kanavia ei ole
-    if (!extDuct) {
-        if(!confirm("Huom: Projektissa ei ole poistokanavaa. Venttiilit luodaan ilman runkoa. Jatketaanko?")) return;
-    }
-    let count = 0;
-    // SILMUKKA: Kerrokset
-    for (let f = 1; f <= floors; f++) {
-        // SILMUKKA: Asunnot tässä kerroksessa
-        for (let a = 1; a <= aptsPerFloor; a++) {
-            const aptName = `${prefix}${aptNum}`; // Esim. A1
-            // Lisätään venttiilit valintojen mukaan
-            if (document.getElementById('chkK').checked) addGenValve(p, aptName, "Keittiö", "h_kso125", extDuct);
-            if (document.getElementById('chkKPH').checked) addGenValve(p, aptName, "KPH", "h_kso100", extDuct);
-            if (document.getElementById('chkVH').checked) addGenValve(p, aptName, "VH", "h_kso100", extDuct);
-            if (document.getElementById('chkWC')?.checked) addGenValve(p, aptName, "WC", "h_kso100", extDuct);
-            if (document.getElementById('chkMH')?.checked) addGenValve(p, aptName, "MH", "fresh100", supDuct);
-            if (document.getElementById('chkOH')?.checked) addGenValve(p, aptName, "OH", "fresh125", supDuct);
-            if (document.getElementById('chkSA')?.checked) addGenValve(p, aptName, "Sauna", "h_kso125", extDuct);
-            if (document.getElementById('chkKHH')?.checked) addGenValve(p, aptName, "KHH", "h_kso100", extDuct);
-            if (document.getElementById('chkFresh').checked) addGenValve(p, aptName, "Korvausilma", "fresh100", supDuct);
-            // Manuaalinen lisäys
-            if (document.getElementById('chkCustom')?.checked) {
-                const name = (document.getElementById('genCustomName').value||'').trim();
-                const typeSel = document.getElementById('genCustomType').value;
-                const model = document.getElementById('genCustomModel').value;
-                if (name) {
-                    const ductId = typeSel === 'extract' ? extDuct : supDuct;
-                    addGenValve(p, aptName, name, model, ductId);
-                }
-            }
-            aptNum++;
-            count++;
-        }
-    }
-    saveData();
-    closeGenerator();
-    showView('view-details');
-    renderDetailsList();
-    alert(`Luotu ${count} asuntoa ja venttiilit!`);
-    renderKLibraryList(v);
 
-}
-function addGenValve(p, apt, room, type, ductId) {
-    p.valves.push({
-        apartment: apt,
-        room: room,
-        type: type,
-        target: 0,
-        flow: 0,
-        pos: 0,
-        parentDuctId: ductId
-    });
-}
 
 function setVisualMode(mode) {
     window.activeVisMode = mode;
@@ -11589,59 +10876,9 @@ function getSignatureHtml(id, printFunc){
     </div>`;
 }
 // Erillinen AHU-demo
-function createDemoAHU(){
-    const p = { id: Date.now(), name: 'Demo AHU (KTS/KSO)', systemType: 'ahu', ducts: [], valves: [], machines: [], meta: {} };
-    const supId = Date.now()+1, extId = Date.now()+2;
-    
-    p.ducts.push({ id: supId, type: 'supply', name: 'Tulo', size: 160, group:'ahu' });
-    p.ducts.push({ id: extId, type: 'extract', name: 'Poisto', size: 160, group:'ahu' });
-    p.machines.push({ type:'ahu', name:'IV-Kone', supPct:50, extPct:50 });
-    
-    const rnd = (target) => Number((target + (Math.random() * 6.0 - 3.0)).toFixed(1));
-    const rpos = () => Math.round(2 + Math.random() * 8);
-    const rpa = () => Number((30 + Math.random() * 40).toFixed(0));
-    
-    // TULO: KTS-125
-    p.valves.push({ room:'Olohuone', type:'h_kts125', target:20, flow:rnd(15), pos:rpos(), measuredP:rpa(), parentDuctId: supId });
-    p.valves.push({ room:'Makuuhuone 1', type:'h_kts125', target:12, flow:rnd(8), pos:rpos(), measuredP:rpa(), parentDuctId: supId });
-    p.valves.push({ room:'Makuuhuone 2', type:'h_kts125', target:12, flow:rnd(8), pos:rpos(), measuredP:rpa(), parentDuctId: supId });
-    
-    // POISTO: KSO-125
-    p.valves.push({ room:'Keittiö', type:'h_kso125', target:20, flow:rnd(25), pos:rpos(), measuredP:rpa(), parentDuctId: extId });
-    p.valves.push({ room:'KPH', type:'h_kso125', target:15, flow:rnd(18), pos:rpos(), measuredP:rpa(), parentDuctId: extId });
-    p.valves.push({ room:'WC', type:'h_kso125', target:10, flow:rnd(12), pos:rpos(), measuredP:rpa(), parentDuctId: extId });
-    p.valves.push({ room:'VH', type:'h_kso125', target:8, flow:rnd(10), pos:rpos(), measuredP:rpa(), parentDuctId: extId });
-
-    projects.push(p); saveData(); renderProjects(); activeProjectId = p.id; 
-    if (typeof openProject === 'function') openProject(p.id); else { try { window.openProject(p.id); } catch(e) {} } 
-    alert('Demo AHU luotu (Venttiilit: KTS-125 & KSO-125)');
-}
 
 // Erillinen Huippuimuri-demo
-function createDemoRoof(){
-    const p = { id: Date.now(), name: 'Demo Huippuimuri (KSO)', systemType: 'roof', ducts: [], valves: [], machines: [], meta: {} };
-    const extId = Date.now()+3;
-    
-    p.ducts.push({ id: extId, type: 'extract', name: 'A-Rappu Poisto', size: 200, group:'roof' });
-    
-    const rnd = (target) => Number((target + (Math.random() * 5.0 - 2.5)).toFixed(1));
-    const rpos = () => Math.round(-5 + Math.random() * 10); // KSO voi olla miinuksella (-5 ... 5)
-    const rpa = () => Number((40 + Math.random() * 30).toFixed(0));
 
-    // POISTO: Vain KSO-125
-    p.valves.push({ apartment:'A1', room:'Keittiö', type:'h_kso125', target:20, flow:rnd(15), pos:rpos(), measuredP:rpa(), parentDuctId: extId });
-    p.valves.push({ apartment:'A1', room:'KPH', type:'h_kso125', target:15, flow:rnd(10), pos:rpos(), measuredP:rpa(), parentDuctId: extId });
-    
-    p.valves.push({ apartment:'A2', room:'Keittiö', type:'h_kso125', target:20, flow:rnd(22), pos:rpos(), measuredP:rpa(), parentDuctId: extId });
-    p.valves.push({ apartment:'A2', room:'KPH', type:'h_kso125', target:15, flow:rnd(18), pos:rpos(), measuredP:rpa(), parentDuctId: extId });
-
-    p.valves.push({ apartment:'A3', room:'Keittiö', type:'h_kso125', target:20, flow:rnd(12), pos:rpos(), measuredP:rpa(), parentDuctId: extId });
-    p.valves.push({ apartment:'A3', room:'KPH', type:'h_kso125', target:15, flow:rnd(8), pos:rpos(), measuredP:rpa(), parentDuctId: extId });
-
-    projects.push(p); saveData(); renderProjects(); activeProjectId = p.id; 
-    if (typeof openProject === 'function') openProject(p.id); else { try { window.openProject(p.id); } catch(e) {} } 
-    alert('Demo Huippuimuri luotu (Venttiilit: KSO-125)');
-}
 
 // Tulosta AHU-pöytäkirja
 // ❌ DEPRECATED
@@ -11921,41 +11158,8 @@ function createRelativeAdjustPanel(suggestions, p=null, ducts=[]) {
         </div>`;
 }
 // Erillinen Hybridi-demo (molemmat järjestelmät)
-function createDemoHybrid(){
-    const p = { id: Date.now(), name: 'Demo Hybridi', systemType: 'hybrid', ducts: [], valves: [], machines: [], meta: {} };
-    // AHU-kanavat
-    const supId = Date.now()+11, extAhuId = Date.now()+12;
-    p.ducts.push({ id: supId, type: 'supply', name: 'Tulo', size: 160, group:'ahu' });
-    p.ducts.push({ id: extAhuId, type: 'extract', name: 'Poisto', size: 160, group:'ahu' });
-    // Huippuimurin poistokanava
-    const roofExtId = Date.now()+13;
-    p.ducts.push({ id: roofExtId, type: 'extract', name: 'A-Rappu Poisto', size: 160, group:'roof' });
-    // Kone
-    p.machines.push({ type:'ahu', name:'IV-Kone', supPct:50, extPct:50 });
-    // Hybridi: tahallinen epätasapaino
-    const rndH = (base)=> Number((base + (Math.random()*4.0 - 2.0)).toFixed(1));
-    const rposH = ()=> Math.round(10 + Math.random()*50);
-    const rpaH = ()=> Number((50 + Math.random()*50).toFixed(0));
-    p.valves.push({ room:'Olohuone', type:'fresh125', target:30, flow:rndH(30), pos:rposH(), measuredP:rpaH(), parentDuctId: supId });
-    p.valves.push({ room:'Makuuhuone', type:'fresh100', target:15, flow:rndH(15), pos:rposH(), measuredP:rpaH(), parentDuctId: supId });
-    p.valves.push({ room:'Työhuone', type:'c_dinoa', target:12, flow:rndH(12), pos:rposH(), measuredP:rpaH(), parentDuctId: supId });
-    p.valves.push({ room:'Keittiö', type:'c_clik125', target:18, flow:rndH(18), pos:rposH(), measuredP:rpaH(), parentDuctId: supId });
-    p.valves.push({ room:'WC', type:'h_kso100', target:10, flow:rndH(10), pos:rposH(), measuredP:rpaH(), parentDuctId: extAhuId });
-    p.valves.push({ room:'KPH', type:'h_kso125', target:20, flow:rndH(20), pos:rposH(), measuredP:rpaH(), parentDuctId: extAhuId });
-    // Huippuimuriin asuntojen venttiileitä (näkyvät pystynäkymässä), vähintään 4
-    const rndHR = (base)=> Number((base + (Math.random()*2.0 - 1.0)).toFixed(1));
-    const rposHR = ()=> Math.round(10 + Math.random()*80);
-    const rpaHR = ()=> Number((20 + Math.random()*90).toFixed(0));
-    p.valves.push({ apartment:'A1', room:'KPH', type:'h_kso100', target:15, flow:rndHR(15), pos:rposHR(), measuredP:rpaHR(), parentDuctId: roofExtId });
-    p.valves.push({ apartment:'A2', room:'WC', type:'h_kso100', target:10, flow:rndHR(10), pos:rposHR(), measuredP:rpaHR(), parentDuctId: roofExtId });
-    p.valves.push({ apartment:'A3', room:'Keittiö', type:'h_kso125', target:20, flow:rndHR(20), pos:rposHR(), measuredP:rpaHR(), parentDuctId: roofExtId });
-    p.valves.push({ apartment:'A4', room:'Siivous', type:'l_ksu125', target:12, flow:rndHR(12), pos:rposHR(), measuredP:rpaHR(), parentDuctId: roofExtId });
-    projects.push(p); saveData(); renderProjects(); activeProjectId = p.id; if (typeof openProject === 'function') openProject(p.id); else { try { window.openProject(p.id); } catch(e) {} } alert('Demo Hybridi luotu');
-}
+
 // Altista demofunktiot globaalisti index.html onclick-kutsuille
-window.createDemoAHU = createDemoAHU;
-window.createDemoRoof = createDemoRoof;
-window.createDemoHybrid = createDemoHybrid;
 
 // Näytä pöytäkirja: Tulo/Poisto (ruudulla)
 // Näytä pöytäkirja: Tulo/Poisto (ruudulla)  + hyväksytty K
@@ -12205,9 +11409,7 @@ function saveSettings() {
 }
 
 // Varmistetaan myös tallennusfunktio
-function saveData() {
-    localStorage.setItem('iv_projects', JSON.stringify(projects));
-}
+
 // --- ROOM PANEL LOGIC START ---
 
 let activePanelRoom = null;
@@ -12261,74 +11463,10 @@ function calculateFlowPerformance(measured, target) {
 }
 
 function renderMeasurementInputList(machine) {
-  const container = document.getElementById('measurementInputList');
-  if (!container || !machine) return;
-
-  container.innerHTML = '';
-
-  const mode = window.currentMode || 'home';
-  const mm = machine.modes?.[mode];
-  if (!mm || !Array.isArray(mm.ducts)) {
-    container.innerHTML = '<div style="color:#777;padding:10px;">Ei runkoja.</div>';
-    return;
-  }
-
-  mm.ducts.forEach(duct => {
-    const block = document.createElement('div');
-    block.className = 'measure-input-block';
-
-    const h = document.createElement('h5');
-    h.textContent = duct.name || 'Runko';
-    block.appendChild(h);
-
-    const table = document.createElement('table');
-    table.className = 'measure-input-table';
-    table.innerHTML = `
-      <thead>
-        <tr>
-          <th>Huone</th>
-          <th>Päätelaite</th>
-          <th>Avaus</th>
-          <th>l/s</th>
-        </tr>
-      </thead>
-      <tbody></tbody>
-    `;
-    block.appendChild(table);
-
-    const tbody = table.querySelector('tbody');
-
-    // oma kevyt data
-    duct.measurementRows = duct.measurementRows || [];
-
-    // renderöi olemassa olevat syöttörivit
-    duct.measurementRows.forEach(r => {
-      tbody.appendChild(renderMeasurementInputRow(r, duct));
-    });
-
-    // 🔑 varmista yksi tyhjä rivi
-    if (!duct.measurementRows.some(r => r.isEmpty)) {
-      const empty = createEmptyMeasurementRow(duct.id);
-      duct.measurementRows.push(empty);
-      tbody.appendChild(renderMeasurementInputRow(empty, duct));
-    }
-
-    container.appendChild(block);
-  });
+  // ❌ POISTETTU: vanha nopea mittalista (korvattu renderMeasurementListV2)
 }
 function refreshMeasurementInputList() {
-  const el = document.getElementById('measurementInputList');
-  if (!el) return;
-
-  if (typeof renderMeasurementInputList !== 'function') return;
-
-  const p = projects.find(x => x.id === activeProjectId);
-  if (!p) return;
-
-  const m = (typeof getActiveMachine === 'function') ? getActiveMachine(p) : null;
-  if (!m) return;
-
-  renderMeasurementInputList(m);
+  // ❌ POISTETTU: vanha nopea mittalista (korvattu renderMeasurementListV2)
 }
 
 function renderRoomPanel() {
@@ -12404,9 +11542,15 @@ function renderRoomPanel() {
     });
 }
 function createDraftValve(duct) {
-    return {
-        id: null,                 // 🔑 ei vielä oikea venttiili
-        __isDraft: true,          // 🔑 tunniste
+    if (!duct.valves) duct.valves = [];
+
+    // älä tee toista draftia
+    const existing = duct.valves.find(v => v.__isDraft);
+    if (existing) return existing;
+
+    const draft = {
+        id: null,
+        __isDraft: true,
         parentDuctId: duct.id,
         room: '',
         type: '',
@@ -12414,11 +11558,13 @@ function createDraftValve(duct) {
         kWorking: '',
         flow: '',
         target: '',
-        measuredP: '',
-        isIndex: false,
-        order: 9999
+        measuredP: ''
     };
+
+    duct.valves.push(draft);
+    return draft;
 }
+
 function attachValveAutocomplete(input, onSelect, opts = {}) {
     const search = opts.search || (() => []);
 
@@ -12497,6 +11643,69 @@ function attachValveAutocomplete(input, onSelect, opts = {}) {
         }
     });
 }
+function renderMachineMeasurementBlock(machine, container) {
+    const mode = window.currentMode || 'home';
+
+    if (!machine.modes[mode].summary) {
+        machine.modes[mode].summary = {};
+    }
+
+    const s = machine.modes[mode].summary;
+
+    const div = document.createElement('div');
+    div.className = 'machine-measure-block';
+
+    div.innerHTML = `
+        <h3>IV-Kone ${machine.name}</h3>
+
+        <div class="machine-grid">
+            <label>
+                Säätötapa
+                <select data-f="controlType">
+                    <option value="">—</option>
+                    <option value="pa" ${s.controlType === 'pa' ? 'selected' : ''}>Pa</option>
+                    <option value="hz" ${s.controlType === 'hz' ? 'selected' : ''}>Hz</option>
+                    <option value="speed" ${s.controlType === 'speed' ? 'selected' : ''}>%</option>
+                </select>
+            </label>
+
+            <label>
+                Säätöarvo
+                <input type="number" data-f="controlValue" value="${s.controlValue ?? ''}">
+            </label>
+
+            <label>
+                Mitattu Pa
+                <input type="number" data-f="measuredPa" value="${s.measuredPa ?? ''}">
+            </label>
+
+            <label>
+                Tulo (l/s)
+                <input type="number" data-f="supplyQ" value="${s.supplyQ ?? ''}">
+            </label>
+
+            <label>
+                Poisto (l/s)
+                <input type="number" data-f="extractQ" value="${s.extractQ ?? ''}">
+            </label>
+        </div>
+    `;
+
+    // 🔑 Bindings
+    div.querySelectorAll('[data-f]').forEach(input => {
+        const key = input.dataset.f;
+
+        input.addEventListener('input', () => {
+            const val = input.value.trim();
+            s[key] = val === '' ? null : Number(val);
+
+            saveProjects(); // jos sinulla on tämä, muuten localStorage suoraan
+        });
+    });
+
+    container.appendChild(div);
+}
+
 
 function renderMeasurementListV2(container) {
     const p = projects.find(x => x.id === activeProjectId);
@@ -12519,7 +11728,7 @@ function renderMeasurementListV2(container) {
     const wrap = document.createElement('div');
     wrap.className = 'measurelist-v2';
     container.appendChild(wrap);
-
+renderMachineMeasurementBlock(machine, wrap);
     // TULO ensin, sitten POISTO
     const ducts = [
         ...mm.ducts.filter(d => d.type === 'supply'),
@@ -12562,7 +11771,21 @@ function renderMeasurementListV2(container) {
 
         const tbody = table.querySelector('tbody');
 
-        const rows = [...(duct.valves || [])];
+const elements = getElementsForDuct(duct, mm);
+elements.forEach(el => {
+    if (el.kind === 'valve') {
+        const v = el.__valve || el;
+        // 🔥 KÄYTÄ VANHAA RENDER-KOODIA SELLAISENAAN
+    }
+
+    if (el.kind === 'damper') {
+        // myöhemmin
+    }
+
+    if (el.kind === 'pressure_reg') {
+        // myöhemmin
+    }
+});
 
 // 🔑 varmista yksi tyhjä (draft) rivi rungon loppuun
 if (!rows.some(v => v.__isDraft)) {
@@ -12573,6 +11796,8 @@ rows.forEach(v => {
     const isDraft = !!v.__isDraft;
 
     const tr = document.createElement('tr');
+    v.__rowEl = tr;
+
     tr.className = isDraft ? 'valve-row draft-row' : 'valve-row';
     if (v.id) tr.dataset.id = v.id;
 
@@ -12591,6 +11816,13 @@ if (!isDraft) {
 
             const pct = calcPct(v.flow, v.target);
             const cls = pctClass(pct);
+            const showSave =
+    !v.__isDraft &&
+    !!v.type &&
+    Number.isFinite(Number(v.pos)) &&
+    Number.isFinite(Number(v.kWorking)) &&
+    isKValueNewForValve(v);
+
 
             tr.innerHTML = `
     <!-- STATUS -->
@@ -12632,9 +11864,39 @@ if (!isDraft) {
     </td>
 
     <!-- K -->
-    <td class="meta">
-        <input type="number" value="${v.kWorking ?? ''}" ${isDraft ? 'disabled' : ''}>
-    </td>
+<td class="meta k-cell">
+  <input
+    type="number"
+    step="0.01"
+    value="${v.kWorking ?? ''}"
+    data-f="kWorking"
+    ${v.kApproved != null ? 'disabled' : ''}
+  >
+
+  ${
+    v.kApproved != null
+      ? `<span
+            class="k-lock"
+            title="Hyväksytty K (avaa klikkaamalla)"
+            onclick="event.stopPropagation(); openUnlockKConfirm('${v.id}')"
+         >🔒</span>`
+      : (
+    showSave
+      ? `<span
+            class="k-save-hint"
+            title="Tallenna K-arvo kirjastoon"
+            onclick="event.stopPropagation(); openSaveKModal('${v.id}')"
+         >💾</span>`
+      : ''
+  )
+
+  }
+</td>
+
+
+
+
+
 
     <!-- MITATTU L/S -->
     <td class="flow">
@@ -12667,15 +11929,34 @@ if (!isDraft) {
 
 
             tbody.appendChild(tr);
-            // 🔍 Päätelaite-autocomplete (ENSIMMÄINEN KERTA)
+            // 🔍 Päätelaite-autocomplete
 const typeInput = tr.querySelector('input[data-f="type"]');
 if (typeInput) {
-    attachValveAutocomplete(typeInput, (selectedType) => {
-        v.type = selectedType;
-    }, {
-        search: searchValveTypes
-    });
+    attachValveAutocomplete(
+        typeInput,
+        (selectedType) => {
+            // 1) päivitä data
+            v.type = selectedType;
+
+            // 2) varmista näkyvä arvo inputiin
+            typeInput.value = formatValveDisplay(selectedType);
+            typeInput.dataset.raw = selectedType;
+
+            // 3) laukaise sama ketju kuin kirjoittaessa (bindMeasurementListV2 kuulee tämän)
+            typeInput.dispatchEvent(new Event('input', { bubbles: true }));
+        },
+        { search: searchValveTypes }
+    );
+    typeInput.addEventListener('blur', () => {
+    const raw = typeInput.dataset.raw;
+    if (raw) {
+        v.type = raw; // lukitaan tekninen tyyppi
+        typeInput.value = formatValveDisplay(raw);
+    }
+});
+
 }
+
 
         });
 
@@ -12684,131 +11965,38 @@ if (typeInput) {
 
     bindMeasurementListV2(container);
 }
-function createEmptyMeasurementRow(ductId) {
-    return {
-        id: crypto.randomUUID(),
-        ductId,
-        isEmpty: true,
-        room: '',
-        device: '',
-        opening: '',
-        airflow: ''
-    };
+function getElementsForDuct(duct, modeData) {
+    // 1️⃣ jos uusi malli käytössä
+    if (Array.isArray(duct.elements)) {
+        return duct.elements;
+    }
+
+    // 2️⃣ fallback: vanha malli → elementeiksi
+    return (duct.valves || []).map(v => ({
+        kind: 'valve',
+        role: 'terminal',
+        __source: 'legacy',
+        __valve: v
+    }));
 }
+
+function createEmptyMeasurementRow(ductId) {
+    // ❌ POISTETTU: legacy mittalista (measurementRows)
+    return null;
+}
+
 function renderMeasurementInputRow(row, duct) {
-  const tr = document.createElement('tr');
-  tr.className = row.isEmpty ? 'empty-row' : 'filled-row';
+  // ❌ POISTETTU: legacy mittalista (measurementRows)
 
-  tr.innerHTML = `
-    <td><input value="${row.room || ''}" placeholder="Huone"></td>
-    <td><input value="${row.device || ''}" placeholder="Päätelaite"></td>
-    <td><input value="${row.opening || ''}" placeholder="Avaus"></td>
-    <td><input value="${row.airflow || ''}" placeholder="l/s"></td>
-  `;
-
-  const fields = ['room','device','opening','airflow'];
-  tr.querySelectorAll('input').forEach((inp, i) => {
-    inp.addEventListener('input', e => {
-      row[fields[i]] = e.target.value;
-
-      // 🔑 PROMOOTIO
-      if (row.isEmpty && e.target.value.trim() !== '') {
-        row.isEmpty = false;
-        tr.className = 'filled-row';
-
-        const newEmpty = createEmptyMeasurementRow(duct.id);
-        duct.measurementRows.push(newEmpty);
-        tr.parentElement.appendChild(
-          renderMeasurementInputRow(newEmpty, duct)
-        );
-      }
-    });
-  });
-
-  return tr;
 }
 
 function renderMeasurementRow(row, duct) {
-    const tr = document.createElement('tr');
-    tr.className = row.isEmpty ? 'empty-row' : 'filled-row';
+    // ❌ POISTETTU: legacy mittalista (measurementRows)
 
-    tr.innerHTML = `
-        <td><input value="${row.room}"></td>
-        <td><input value="${row.device}"></td>
-        <td><input value="${row.opening}"></td>
-        <td><input value="${row.airflow}"></td>
-    `;
-
-    const fields = ['room', 'device', 'opening', 'airflow'];
-
-    tr.querySelectorAll('input').forEach((input, index) => {
-        input.addEventListener('input', e => {
-            row[fields[index]] = e.target.value;
-
-            // 🔑 PROMOOTIO: tyhjä → venttiili
-            if (row.isEmpty && e.target.value.trim() !== '') {
-                row.isEmpty = false;
-                tr.className = 'filled-row';
-
-                const newEmpty = createEmptyMeasurementRow(duct.id);
-                duct.measurementRows.push(newEmpty);
-
-                tr.parentElement.appendChild(
-                    renderMeasurementRow(newEmpty, duct)
-                );
-            }
-        });
-    });
-
-    return tr;
 }
 function renderMeasurementList(machine) {
-    const container = document.getElementById('measurementList');
-    if (!container || !machine || !machine.ducts) return;
+    // ❌ POISTETTU: legacy mittalista (measurementRows)
 
-    container.innerHTML = '';
-
-    machine.ducts.forEach(duct => {
-        const block = document.createElement('div');
-        block.style.marginBottom = '16px';
-
-        const title = document.createElement('h5');
-        title.textContent = duct.name || 'Runko';
-        block.appendChild(title);
-
-        const table = document.createElement('table');
-        table.className = 'measurement-table';
-
-        table.innerHTML = `
-            <thead>
-                <tr>
-                    <th>Huone</th>
-                    <th>Päätelaite</th>
-                    <th>Avaus</th>
-                    <th>l/s</th>
-                </tr>
-            </thead>
-            <tbody></tbody>
-        `;
-
-        const tbody = table.querySelector('tbody');
-
-        duct.measurementRows = duct.measurementRows || [];
-
-        duct.measurementRows.forEach(row => {
-            tbody.appendChild(renderMeasurementRow(row, duct));
-        });
-
-        // 🔑 varmista yksi tyhjä rivi
-        if (!duct.measurementRows.some(r => r.isEmpty)) {
-            const empty = createEmptyMeasurementRow(duct.id);
-            duct.measurementRows.push(empty);
-            tbody.appendChild(renderMeasurementRow(empty, duct));
-        }
-
-        block.appendChild(table);
-        container.appendChild(block);
-    });
 }
 
 // Navigointi seuraavaan huoneeseen/asuntoon paneelissa
@@ -13443,6 +12631,75 @@ function generateRelativeAdjustmentInstructions(valves, indexValve, tolerance = 
         systemIndexRatio: indexRatio
     };
 }
+function openKLibDetail(entry) {
+    if (!entry) return;
+
+    const modal = document.getElementById('klibDetailModal');
+    const titleEl = document.getElementById('klibDetailTitle');
+    const listEl  = document.getElementById('klibDetailList');
+    const warnEl  = document.getElementById('klibDetailWarning');
+
+    if (!modal || !listEl) return;
+
+    // Key muodostus (sama kuin kirjastossa)
+    const key = [
+        entry.kind, entry.model, entry.size || '', entry.variant || '', entry.pos || ''
+    ].join('|');
+
+    // Hae kaikki saman keyn merkinnät
+    const all = (window.userKLibraryV2?.entries || []).filter(e => {
+        const k = [e.kind, e.model, e.size || '', e.variant || '', e.pos || ''].join('|');
+        return k === key;
+    });
+
+    // Otsikko
+    titleEl.textContent = `${entry.model} ${entry.size ? 'Ø' + entry.size : ''} ${entry.variant || ''}`.trim();
+
+    // Varoitus jos useita
+    warnEl.style.display = all.length > 1 ? 'block' : 'none';
+
+    // Lajittelu: hyväksytyt ensin, uusin ensin
+    const sorted = all.slice().sort((a, b) => {
+        if (!!a.approved !== !!b.approved) return a.approved ? -1 : 1;
+        return (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0);
+    });
+
+    const fmtDate = (ts) => {
+        if (!ts) return '';
+        try { return new Date(ts).toLocaleString('fi-FI'); } catch { return ''; }
+    };
+
+    listEl.innerHTML = sorted.map(e => {
+        const status = e.approved ? '✅ Käytössä' : '⏳ Odottaa';
+        return `
+          <div style="border:1px solid #e6e6e6; border-radius:10px; padding:10px;">
+            <div style="display:flex; justify-content:space-between; gap:8px;">
+              <div>
+                <div style="font-weight:700;">K: ${Number(e.k).toFixed(2)} • Avaus: ${e.pos ?? '-'}</div>
+                <div style="font-size:12px; color:#666;">
+                  ${status}
+                  ${e.source ? ' • ' + e.source : ''}
+                  ${e.createdBy ? ' • ' + e.createdBy : ''}
+                </div>
+                <div style="font-size:11px; color:#888;">${fmtDate(e.updatedAt || e.createdAt)}</div>
+              </div>
+              <div style="display:flex; flex-direction:column; gap:6px;">
+                <button class="btn btn-secondary" disabled>✅ Hyväksy</button>
+                <button class="btn btn-secondary" disabled>🗑 Poista</button>
+              </div>
+            </div>
+          </div>
+        `;
+    }).join('');
+
+    modal.style.display = 'flex';
+}
+
+function closeKLibDetail() {
+    const modal = document.getElementById('klibDetailModal');
+    if (modal) modal.style.display = 'none';
+}
+
 function approveWorkingK(idx) {
     const p = projects.find(x => x.id === activeProjectId);
     if (!p) return;
@@ -13598,6 +12855,141 @@ function buildReportDataForActiveProject() {
         }
     };
 }
+function openAddKModal() {
+    document.getElementById('addKModal').style.display = 'flex';
+    document.getElementById('addKRows').innerHTML = '';
+    addKRow();
+}
+
+function closeAddKModal() {
+    document.getElementById('addKModal').style.display = 'none';
+}
+
+function addKRow() {
+    const tbody = document.getElementById('addKRows');
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><input placeholder="-15" style="width:100%"></td>
+      <td><input placeholder="1.25" style="width:100%"></td>
+      <td><button onclick="this.closest('tr').remove()">✖</button></td>
+    `;
+    tbody.appendChild(tr);
+}
+
+function saveKRows() {
+    const kind = document.getElementById('addKKind').value;
+    const model = document.getElementById('addKModel').value.trim();
+    const size = document.getElementById('addKSize').value.trim();
+    const variant = document.getElementById('addKVariant').value.trim();
+
+    if (!model || !size) {
+        alert('Malli ja koko ovat pakollisia');
+        return;
+    }
+
+    window.userKLibraryV2 = window.userKLibraryV2 || { entries: [] };
+
+    const rows = [...document.querySelectorAll('#addKRows tr')];
+    let saved = 0;
+    let skipped = 0;
+
+    rows.forEach(r => {
+        const pos = r.children[0].querySelector('input').value.trim();
+        const k = parseFloat(
+            r.children[1].querySelector('input').value.replace(',', '.')
+        );
+
+        if (!pos || !isFinite(k)) {
+            skipped++;
+            return;
+        }
+
+        window.userKLibraryV2.entries.push({
+            kind,
+            model,
+            size,
+            variant,
+            pos,
+            k,
+            source: 'library',
+            createdBy: 'user',
+            approved: false,
+            createdAt: Date.now()
+        });
+
+        saved++;
+    });
+
+    closeAddKModal();
+    renderKLibraryAdmin();
+
+    alert(`Tallennettu ${saved} K-arvoa, ohitettu ${skipped}`);
+}
+function resolveKForValveContext(ctx) {
+    // ctx = { kind, model, size, variant, pos, manualK }
+
+    // 1️⃣ Manuaalinen K voittaa aina
+    if (ctx.manualK != null && isFinite(ctx.manualK)) {
+        return {
+            k: ctx.manualK,
+            source: 'manual'
+        };
+    }
+
+    // 2️⃣ Hae kirjastosta
+    const entries = window.userKLibraryV2?.entries || [];
+
+    const matches = entries.filter(e =>
+        e.kind === ctx.kind &&
+        e.model === ctx.model &&
+        String(e.size) === String(ctx.size) &&
+        String(e.variant || '') === String(ctx.variant || '') &&
+        String(e.pos) === String(ctx.pos)
+    );
+
+    if (!matches.length) {
+        return null;
+    }
+
+    // hyväksytty ensin, muuten uusin
+    const approved = matches
+        .filter(e => e.approved)
+        .sort((a, b) => b.createdAt - a.createdAt)[0];
+
+    if (approved) {
+        return {
+            k: approved.k,
+            source: 'library-approved'
+        };
+    }
+
+    const latest = matches
+        .sort((a, b) => b.createdAt - a.createdAt)[0];
+
+    return {
+        k: latest.k,
+        source: 'library-latest'
+    };
+}
+function updateKBadge(badgeEl, state) {
+    if (!badgeEl) return;
+
+    if (state === 'manual') {
+        badgeEl.textContent = '🔒 Manuaalinen K';
+        badgeEl.style.color = '#b26a00';
+    }
+    else if (state === 'library') {
+        badgeEl.textContent = '📚 K kirjastosta';
+        badgeEl.style.color = '#2e7d32';
+    }
+    else if (state === 'missing') {
+        badgeEl.textContent = '⚠️ K-arvo puuttuu';
+        badgeEl.style.color = '#b00020';
+    }
+    else {
+        badgeEl.textContent = '';
+    }
+}
 
   /**
    * Tekee ihmisen luettavan tekstiraportin (suomeksi).
@@ -13689,6 +13081,10 @@ function buildReportDataForActiveProject() {
     console.log('📄 Raportti (JSON):', report);
     return report;
 }
+function saveCurrentKToLibrary() {
+    console.warn('saveCurrentKToLibrary: vanha K-kirjastotoiminto poistettu (V2)');
+}
+
 function exportReportText() {
     const report = buildReportDataForActiveProject();
     if (!report) return 'Ei raporttidataa.';
@@ -13773,6 +13169,9 @@ function migrateProjectToModes(p) {
 
     console.log('🔁 Projekti migroitu modes-rakenteeseen:', p.name);
 }
+function openKLibraryPicker() {
+    console.warn('openKLibraryPicker: vanha toiminto poistettu (V2)');
+}
 
 function downloadReportText() {
     const report = buildReportDataForActiveProject();
@@ -13791,9 +13190,8 @@ function downloadReportText() {
 window.openKLibraryPicker = openKLibraryPicker;
 window.saveCurrentKToLibrary = saveCurrentKToLibrary;
 
-// --------------------------------------------------
-// INIT: Venttiilimallit & koot valmiiksi heti sivun latauksessa
-// --------------------------------------------------
+
+window.openKLibraryPicker = openKLibraryPicker;
+window.saveCurrentKToLibrary = saveCurrentKToLibrary;
 
 
-// --- ROOM PANEL LOGIC END ---

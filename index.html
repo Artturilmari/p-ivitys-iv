@@ -13,6 +13,8 @@
         function safeCreateDemoAHU(){ if (typeof window.createDemoAHU === 'function') { return window.createDemoAHU(); } alert('Demo AHU -funktio ei ole vielä ladattu.'); }
         function safeCreateDemoRoof(){ if (typeof window.createDemoRoof === 'function') { return window.createDemoRoof(); } alert('Demo Huippuimuri -funktio ei ole vielä ladattu.'); }
         function safeCreateDemoHybrid(){ if (typeof window.createDemoHybrid === 'function') { return window.createDemoHybrid(); } alert('Demo Hybridi -funktio ei ole vielä ladattu.'); }
+    
+
         function safeShowVisual(){ if (typeof window.showVisual === 'function') { return window.showVisual(); } alert('Visualisointi ei ole vielä ladattu.'); }
     </script>
 
@@ -20,14 +22,20 @@
 </head>
 <body>
     <div class="header">
-        <button class="back-btn" id="backBtn">←</button>
+<button class="back-btn" onclick="goBackToProjects()">←</button>
         <h1>IV-Master Pro V80</h1>
     </div>
 
     <!-- PROJECTS VIEW -->
     <div class="view active" id="view-projects">
         <div style="padding: 20px;">
-            <button class="btn btn-primary" onclick="showNewProjectModal()">+ Uusi projekti</button>
+
+ <button
+            type="button"
+            class="btn btn-primary"
+            onclick="showNewProjectModal()">
+            + Uusi projekti
+        </button>
             <button class="btn btn-demo" onclick="safeCreateDemoRoof()">📋 Lataa demo: Huippuimuri</button>
             <button class="btn btn-demo" onclick="safeCreateDemoAHU()">📋 Lataa demo: Tulo/Poisto</button>
             <button class="btn btn-demo" onclick="safeCreateDemoHybrid()">📋 Lataa demo: Hybridi</button>
@@ -49,6 +57,10 @@
                font-weight:bold;font-size:13px;">
    </div>
             <div id="project-actions" style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;">
+                <span style="color:red; font-weight:bold;">
+    DEBUG: PROJECT ACTIONS HERE
+</span>
+
 <button class="btn btn-secondary" onclick="showAddValve('extract')">
     + Lisää poistoventtiili
 </button>                <button class="btn btn-primary" onclick="showVisual()" style="width:auto; padding:8px 12px;">📊 Näytä kaavio</button>
@@ -58,7 +70,12 @@
 <button class="btn btn-secondary" onclick="openReportView()" style="width:auto; padding:8px 12px;">
     📄 Pöytäkirja
 </button>
-                <button class="btn btn-secondary" onclick="showReportRoof()" style="width:auto; padding:8px 12px;">📄 Näytä pöytäkirja: Huippuimuri</button>
+<button class="btn btn-secondary"
+        onclick="openKLibraryAdmin()"
+        style="width:auto; padding:8px 12px;">
+    📚 K-kirjasto
+</button>
+               <button class="btn btn-secondary" onclick="showReportRoof()" style="width:auto; padding:8px 12px;">📄 Näytä pöytäkirja: Huippuimuri</button>
                     <button class="btn btn-secondary" onclick="(window.showChart?showChart():alert('Kaavion näyttö ei ole vielä käytettävissä'))" style="width:auto; padding:8px 12px;">📈 Näytä kaavio</button>
                 <button class="btn btn-secondary" onclick="showSettings()" style="width:auto; padding:8px 12px;">⚙️ Asetukset</button>
             </div>
@@ -136,6 +153,7 @@
         </div>
     </div>
 
+
     <!-- APARTMENT MODAL -->
     <div class="modal-overlay" id="aptModal" style="display:none;">
         <div class="modal-content" style="width:90%; max-width:500px;">
@@ -160,6 +178,53 @@
             </div>
         </div>
     </div>
+<!-- ADD K VALUE MODAL (K-LIBRARY) -->
+<div class="modal-overlay" id="addKModal" style="display:none;">
+  <div class="modal-content" style="max-width:720px; width:100%; padding:12px;">
+
+    <h3>➕ Lisää K-arvo kirjastoon</h3>
+
+    <!-- Venttiilin tiedot -->
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px;">
+      <select id="addKKind">
+        <option value="supply">Venttiili – Tulo</option>
+        <option value="extract">Venttiili – Poisto</option>
+        <option value="damper">Säätimet</option>
+        <option value="diffuser">Hajottajat</option>
+        <option value="other">Muu</option>
+      </select>
+
+      <input id="addKModel" placeholder="Malli (esim. Halton KSO)">
+      <input id="addKSize" placeholder="Koko (esim. 125)">
+      <input id="addKVariant" placeholder="Variantti (valinnainen)">
+    </div>
+
+    <!-- Monirivinen syöttö -->
+    <table style="width:100%; font-size:13px; margin-bottom:10px;">
+      <thead>
+        <tr>
+          <th>Avaus</th>
+          <th>K-arvo</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="addKRows"></tbody>
+    </table>
+
+    <button class="btn btn-secondary" onclick="addKRow()">➕ Lisää rivi</button>
+
+    <div style="display:flex; gap:8px; margin-top:12px;">
+      <button class="btn btn-primary" onclick="saveKRows()">💾 Tallenna</button>
+      <div style="flex:1;"></div>
+      <button class="btn btn-secondary" onclick="closeAddKModal()">Peruuta</button>
+    </div>
+
+    <div style="margin-top:8px; font-size:12px; color:#666;">
+      ℹ️ Kaikki K-arvot tallennetaan ehdotuksina. Päällekkäisyydet sallitaan.
+    </div>
+
+  </div>
+</div>
 
     <!-- ADD/EDIT MACHINE VIEW -->
     <div class="view" id="view-add-machine">
@@ -353,12 +418,129 @@
             <input type="file" id="logoUpload" accept="image/*" onchange="handleLogoUpload()">
             <img id="settingsLogoPreview" style="max-height: 80px; margin-top: 10px; display: none; border-radius: 8px;">
             <button class="btn btn-primary" onclick="saveSettings()">Tallenna</button>
+            <hr style="margin:20px 0;">
+
+<h4>Ylläpito</h4>
+
+<button class="btn btn-secondary"
+        onclick="openKLibraryAdmin()">
+    📚 K-kirjasto (Admin)
+</button>
+
         </div>
     </div>
+<<!-- K-LIBRARY ADMIN VIEW -->
+<div class="view" id="view-klib-admin" style="display:none;">
+  <div style="padding:12px; max-width:1200px; margin:0 auto;">
+
+    <!-- YLÄRIVI -->
+<div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
+
+  <button class="btn btn-secondary"
+          onclick="showView('view-details')">
+      ← Takaisin
+  </button>
+
+  <div style="flex:1;">
+    <div style="font-size:16px; font-weight:800;">📚 K-kirjasto</div>
+    <div style="font-size:12px; color:#666;">
+      Haku + kansiot (mobiiliystävällinen)
+    </div>
+  </div>
+
+  <button class="btn btn-secondary"
+          title="Päivitä"
+          onclick="renderKLibraryAdmin()">
+      🔄
+  </button>
+
+  <button class="btn btn-primary"
+          title="Lisää K-arvo"
+          onclick="openAddKModal()">
+      ➕
+  </button>
+
+</div>
+
+    <!-- HAKU -->
+    <div style="display:flex; gap:8px; margin-bottom:10px;">
+      <input
+        id="klibSearch"
+        type="text"
+        placeholder="Hae: Halton KSO 125, variantti, huom…"
+        style="flex:1; padding:10px; border:1px solid #ddd; border-radius:10px; font-size:14px;"
+      />
+    </div>
+
+    <!-- KANSIOT / KATEGORIAT -->
+    <div style="display:flex; gap:8px; margin-bottom:10px; overflow:auto; padding-bottom:4px;">
+      <button class="btn btn-secondary" style="white-space:nowrap;" onclick="window.uiState=window.uiState||{}; window.uiState.klibCategory='valve'; renderKLibraryAdmin();">Venttiilit</button>
+      <button class="btn btn-secondary" style="white-space:nowrap;" onclick="window.uiState=window.uiState||{}; window.uiState.klibCategory='damper'; renderKLibraryAdmin();">Säätimet</button>
+      <button class="btn btn-secondary" style="white-space:nowrap;" onclick="window.uiState=window.uiState||{}; window.uiState.klibCategory='diffuser'; renderKLibraryAdmin();">Hajottajat</button>
+      <button class="btn btn-secondary" style="white-space:nowrap;" onclick="window.uiState=window.uiState||{}; window.uiState.klibCategory='other'; renderKLibraryAdmin();">Muut</button>
+      <button class="btn btn-secondary" style="white-space:nowrap;" onclick="window.uiState=window.uiState||{}; window.uiState.klibCategory='all'; renderKLibraryAdmin();">Kaikki</button>
+    </div>
+
+    <!-- INFO -->
+    <div id="klibAdminInfo" style="font-size:12px; color:#666; margin-bottom:10px;"></div>
+
+    <!-- KORTTILISTA -->
+    <div id="klibAdminCards" style="display:flex; flex-direction:column; gap:10px;"></div>
+
+  </div>
+</div>
+
+
+        <!-- HAKU -->
+        <div style="display:flex; gap:8px; margin-bottom:10px;">
+            <input type="text"
+                   id="klibSearch"
+                   placeholder="Hae: malli, koko, variantti…"
+                   style="flex:1; padding:8px;"
+                   oninput="renderKLibraryAdmin()">
+
+            <select id="klibKindFilter"
+                    onchange="renderKLibraryAdmin()"
+                    style="padding:8px;">
+                <option value="">Kaikki</option>
+                <option value="supply">Tulo</option>
+                <option value="extract">Poisto</option>
+                <option value="damper">Pelti</option>
+                <option value="other">Muu</option>
+            </select>
+        </div>
+
+        <!-- TAULUKKO -->
+        <div style="overflow:auto; border:1px solid #ddd; border-radius:6px;">
+            <table class="report" style="width:100%; font-size:13px;">
+                <thead>
+                    <tr>
+                        <th>Laji</th>
+                        <th>Malli</th>
+                        <th>Koko</th>
+                        <th>Variantti</th>
+                        <th>Avaus</th>
+                        <th>K</th>
+                        <th>Huomio</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody id="klibTableBody">
+                    <!-- JS täyttää -->
+                </tbody>
+            </table>
+        </div>
+
+        <div style="margin-top:10px; font-size:12px; color:#666;">
+            ⚠️ Sama venttiili + avaus = yksi K-arvo. Uusi tallennus korvaa vanhan automaattisesti.
+        </div>
+
+    </div>
+</div>
 
     <!-- REPORT VIEW -->
     <div class="view" id="view-report">
-        <<div style="padding:0;">
+        <div style="padding:0;">
 
     <!-- RAPORTIN YLÄPALKKI -->
     <div id="report-toolbar"
@@ -467,7 +649,8 @@
 
     <button class="fab" onclick="safeShowVisual()">📊</button>
     <div id="newProjectModal" class="modal-overlay">
-        <div class="modal-box">
+    <div class="modal">
+
             <h3>Uusi projekti</h3>
             
             <label>Kohteen nimi</label>
@@ -482,11 +665,48 @@
             </select>
             
             <div style="display:flex; gap:10px; margin-top:20px;">
-                <button class="btn btn-primary" onclick="confirmCreateProject()">Luo kohde</button>
+<button
+    type="button"
+    class="btn btn-primary"
+    onclick="confirmCreateProject()">
+    Luo kohde
+</button>
+
+
+
                 <button class="btn btn-secondary" onclick="closeModal()">Peruuta</button>
             </div>
         </div>
     </div>
+<!-- K-LIBRARY DETAIL MODAL -->
+<div class="modal-overlay" id="klibDetailModal" style="display:none;">
+  <div class="modal-content" style="max-width:720px; width:100%; padding:12px;">
+
+    <!-- OTSIKKO -->
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+      <strong id="klibDetailTitle" style="font-size:16px;">Venttiili</strong>
+      <div style="flex:1;"></div>
+      <button class="btn btn-secondary" onclick="closeKLibDetail()">✖</button>
+    </div>
+
+    <!-- VAROITUS -->
+    <div id="klibDetailWarning"
+         style="display:none; margin-bottom:8px; padding:8px; border-radius:8px; background:#fff3cd; color:#856404; font-size:13px;">
+      ⚠️ Useita K-arvoja tälle venttiilille. Käytössä on viimeisin hyväksytty.
+    </div>
+
+    <!-- LISTA -->
+    <div id="klibDetailList" style="display:flex; flex-direction:column; gap:8px;"></div>
+
+    <!-- TOIMINNOT (UI only) -->
+    <div style="display:flex; gap:8px; margin-top:10px;">
+      <button class="btn btn-primary" onclick="alert('Lisäys tehdään seuraavassa vaiheessa')">➕ Lisää K-arvo</button>
+      <div style="flex:1;"></div>
+      <button class="btn btn-secondary" onclick="closeKLibDetail()">Sulje</button>
+    </div>
+
+  </div>
+</div>
 
     <!-- GENERAATTORIN MODAALI -->
     <div id="genModal" class="modal-overlay">
@@ -555,11 +775,7 @@
             </div>
         </div>
     </div>
-    <div id="kLibraryModal" class="modal-overlay" style="display:none;">
-    <div class="modal" style="max-width:600px;">
-        <div class="modal-header">
-            📚 Oma K-kirjasto
-        </div>
+    
 
         <div class="modal-content" id="kLibraryContent">
             <!-- täytetään JS:llä -->
@@ -569,8 +785,6 @@
 <button class="btn btn-cancel" onclick="closeKLibraryModal()">Sulje</button>
         </div>
     </div>
-</div>
-</div>
 
 <button
     id="projectFab"

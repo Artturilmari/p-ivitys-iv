@@ -57,15 +57,6 @@
     transition: outline 0.3s ease;
 }
 
-.modal-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0,0,0,0.45);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 9999;
-}
 
 .modal {
     background: #fff;
@@ -124,7 +115,15 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .back-btn { background: none; border: none; color: white; font-size: 24px; cursor: pointer; padding: 0 10px 0 0; }
 
 
-.view { display: none; padding: 15px; animation: fadeIn 0.2s; }
+.view {
+    display: none;
+    padding: 15px;
+    animation: fadeIn 0.2s;
+    position: relative;
+    z-index: 1;
+}
+
+
 
 .view.active { display: block; }
 
@@ -294,9 +293,7 @@ table.report th { background: #f0f0f0; }
 
 #reportLogoImg { max-height: 50px; max-width: 150px; display: none; margin-bottom: 10px; }
 /* PROJEKTIN LUONTI-IKKUNA */
-        .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 3000; }
-        .modal-box { background: white; padding: 20px; border-radius: 12px; width: 85%; max-width: 350px; box-shadow: 0 4px 15px rgba(0,0,0,0.3); }
-        .modal-box h3 { margin-top: 0; }
+        
 
         /* VISUAL STYLES */
                 /* UUDET VISUAALISET TYYLIT (KERROSTALO) */
@@ -348,14 +345,12 @@ table.report th { background: #f0f0f0; }
                 .apt-header { background: var(--primary); color: white; padding: 10px; border-radius: 8px 8px 0 0; display:flex; justify-content:space-between; align-items:center; }
 
 /* GENERAATTORIN TYYLIT */
-.modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); display: none; align-items: center; justify-content: center; z-index: 9999; }
 .gen-box { background: white; padding: 20px; border-radius: 12px; width: 90%; max-width: 350px; max-height: 90vh; overflow-y: auto; }
 .gen-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
 .gen-row input[type="number"], .gen-row input[type="text"] { width: 70px; text-align: center; margin: 0; padding: 5px; }
 .gen-group { border: 1px solid #eee; padding: 10px; border-radius: 8px; margin-bottom: 10px; background: #f9f9f9; }
 
 /* GENERAATTORIN IKKUNA */
-.modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: none; align-items: center; justify-content: center; z-index: 9999; }
 .modal-content { background: white; padding: 20px; border-radius: 12px; width: 90%; max-width: 400px; box-shadow: 0 5px 20px rgba(0,0,0,0.3); }
 .gen-row { display:flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
 .gen-row input { width: 60px; text-align: center; margin: 0; }
@@ -1654,6 +1649,17 @@ button:disabled {
   font-size:12px;
   color:#666;
 }
+.machine-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 8px;
+}
+
+.machine-grid label {
+    font-size: 12px;
+    display: flex;
+    flex-direction: column;
+}
 
 .map-area{
   position:relative;
@@ -2747,4 +2753,95 @@ button:disabled {
     top: 32px; /* otsikkorivin korkeus */
     z-index: 4;
     background: #fff;
+}
+.k-cell input {
+    padding-right: 22px; /* tilaa 💾-ikonille */
+}
+
+.k-save-hint:hover {
+    color: #0d47a1;
+}
+.k-cell {
+    position: relative;
+}
+
+.k-cell input {
+    padding-right: 28px; /* lisää tilaa ikonille */
+}
+
+.k-save-hint {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 15px;
+    cursor: pointer;
+    opacity: 0.7;
+}
+
+.k-save-hint:hover {
+    opacity: 1;
+    color: #0d47a1;
+}
+.measure-table td.k-cell {
+  position: relative;
+}
+
+.measure-table td.k-cell input {
+  padding-right: 30px; /* tilaa 💾-ikonille */
+}
+
+.k-save-hint {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  cursor: pointer;
+  font-size: 15px;
+  opacity: 0.85;
+  user-select: none;
+}
+.measure-table td.k-cell { position: relative; }
+
+.k-lock {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  cursor: pointer;
+  font-size: 15px;
+  opacity: 0.85;
+}
+.k-lock:hover { opacity: 1; }
+
+
+#newProjectModal {
+    position: fixed !important;
+    inset: 0 !important;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0,0,0,0.6);
+    z-index: 99999 !important;
+}
+.modal-box {
+    position: relative;
+    z-index: 100000;
+}
+
+/* 🔒 MODAALIT AINA KLIKATTAVIA */
+#newProjectModal {
+    pointer-events: auto !important;
+}
+
+/* ⛔ ESTÄ TAUSTAN KLIKIT MODAALIN AIKANA */
+body.modal-open .view {
+    pointer-events: none !important;
+}
+.machine-measure-block {
+    background: #eef2ff;
+    border: 1px solid #c7d2fe;
+    padding: 10px;
+    border-radius: 8px;
+    margin-bottom: 12px;
 }
