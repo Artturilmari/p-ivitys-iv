@@ -27,24 +27,63 @@
     </div>
 
     <!-- PROJECTS VIEW -->
-    <div class="view active" id="view-projects">
-        <div style="padding: 20px;">
+<div class="view active" id="view-projects">
+    <div style="padding: 20px;">
 
- <button
+        <!-- Uusi projekti -->
+        <button
             type="button"
             class="btn btn-primary"
             onclick="showNewProjectModal()">
             + Uusi projekti
         </button>
-            <button class="btn btn-demo" onclick="safeCreateDemoRoof()">📋 Lataa demo: Huippuimuri</button>
-            <button class="btn btn-demo" onclick="safeCreateDemoAHU()">📋 Lataa demo: Tulo/Poisto</button>
-            <button class="btn btn-demo" onclick="safeCreateDemoHybrid()">📋 Lataa demo: Hybridi</button>
-                <button class="btn btn-demo" onclick="(window.createDemoTuloPoisto?createDemoTuloPoisto():alert('Demo ei ole vielä ladattu'))">📋 Lataa demo: Tulo/Poisto (kerrostalo)</button>
-            <button class="btn btn-primary" onclick="showRelativeAdjustShortcut()" style="margin-top: 10px;">⚖️ Suora säätö</button>
-            <div id="noProjectsMsg" style="text-align: center; color: #999; margin-top: 40px;">Ei projekteja. Luo uusi!</div>
-            <div id="projectsList"></div>
+
+        <!-- Arkisto -->
+        <button
+            class="btn btn-secondary"
+            style="margin-top:10px;"
+            onclick="openArchiveView()">
+            📁 Arkisto
+        </button>
+
+        <!-- Suora säätö -->
+        <button
+            class="btn btn-primary"
+            onclick="showRelativeAdjustShortcut()"
+            style="margin-top:10px;">
+            ⚖️ Suora säätö
+        </button>
+
+        <!-- Ei projekteja -viesti -->
+        <div
+            id="noProjectsMsg"
+            style="text-align:center; color:#999; margin-top:40px;">
+            Ei projekteja. Luo uusi!
         </div>
+
+        <!-- Projektien lista -->
+        <div id="projectsList"></div>
+
     </div>
+</div>
+
+<!-- ===============================
+     ARKISTO
+     =============================== -->
+<div id="view-project-archive" class="view" style="display:none; padding:16px;">
+
+    <h2 style="margin-bottom:12px;">📁 Arkisto</h2>
+
+    <!-- Tähän renderProjectArchive() piirtää listan -->
+    <div id="projectArchiveList"></div>
+
+    <div style="margin-top:20px;">
+        <button class="btn btn-secondary"
+                onclick="showView('view-projects')">
+            ← Takaisin etusivulle
+        </button>
+    </div>
+</div>
 
     <!-- DETAILS VIEW -->
     <div class="view" id="view-details">
@@ -113,7 +152,6 @@
     <!-- renderDetailsList() täyttää tämän -->
 </div>
 <h4>Mittalista</h4>
-<h4 style="margin-top:16px;">Nopea mittalista (syöttö)</h4>
 
 <div style="margin-top:8px;">
 <button class="btn btn-primary" onclick="showAddValve('supply')">
@@ -178,53 +216,134 @@
             </div>
         </div>
     </div>
-<!-- ADD K VALUE MODAL (K-LIBRARY) -->
+<!-- ADD K VALUE MODAL (V2 – SINGLE ENTRY) -->
 <div class="modal-overlay" id="addKModal" style="display:none;">
   <div class="modal-content" style="max-width:720px; width:100%; padding:12px;">
 
-    <h3>➕ Lisää K-arvo kirjastoon</h3>
+  <h3>➕ Lisää K-arvoja kirjastoon</h3>
 
-    <!-- Venttiilin tiedot -->
-    <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px;">
-      <select id="addKKind">
-        <option value="supply">Venttiili – Tulo</option>
-        <option value="extract">Venttiili – Poisto</option>
-        <option value="damper">Säätimet</option>
-        <option value="diffuser">Hajottajat</option>
-        <option value="other">Muu</option>
-      </select>
+  <!-- Perustiedot -->
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px;">
+    <select id="addKKind">
+      <option value="supply">Tulo</option>
+      <option value="extract">Poisto</option>
+      <option value="damper">Säädin</option>
+      <option value="diffuser">Hajottaja</option>
+      <option value="other">Muu</option>
+    </select>
 
-      <input id="addKModel" placeholder="Malli (esim. Halton KSO)">
-      <input id="addKSize" placeholder="Koko (esim. 125)">
-      <input id="addKVariant" placeholder="Variantti (valinnainen)">
-    </div>
+    <input id="addKModel" placeholder="Malli (esim. Halton KSO)">
+    <input id="addKSize" placeholder="Koko (esim. 125)">
+    <input id="addKVariant" placeholder="Variantti (valinnainen)">
+    <label style="font-size:12px;">Avausväli</label>
+<input id="addKStep"
+       type="number"
+       value="1"
+       step="0.5"
+       style="width:80px;">
+<label style="font-size:12px; margin-top:6px;">
+  Liitä lista (Ctrl+V)
+</label>
 
-    <!-- Monirivinen syöttö -->
-    <table style="width:100%; font-size:13px; margin-bottom:10px;">
-      <thead>
-        <tr>
-          <th>Avaus</th>
-          <th>K-arvo</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody id="addKRows"></tbody>
-    </table>
+<textarea
+  id="addKPaste"
+  rows="4"
+  placeholder="Esim:
+-15 2.10
+-10 2.40
+-5  2.80"
+  style="width:100%; font-size:12px;"
+></textarea>
 
-    <button class="btn btn-secondary" onclick="addKRow()">➕ Lisää rivi</button>
+<button class="btn btn-secondary"
+        style="margin-top:4px;"
+        onclick="parsePastedKList()">
+  📋 Tuo listasta
+</button>
 
-    <div style="display:flex; gap:8px; margin-top:12px;">
-      <button class="btn btn-primary" onclick="saveKRows()">💾 Tallenna</button>
+  </div>
+  
+
+  <!-- Monirivinen syöttö -->
+  <table style="width:100%; font-size:13px; margin-bottom:10px;">
+    <thead>
+      <tr>
+        <th style="text-align:left;">Avaus</th>
+        <th style="text-align:left;">K-arvo</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="addKRows"></tbody>
+  </table>
+
+  <button class="btn btn-secondary" onclick="addKRow()">➕ Lisää rivi</button>
+  <button class="btn btn-secondary"
+        onclick="generateIntermediateKRows()">
+  ⚙️ Täydennä väliarvot
+</button>
+
+
+  <div style="display:flex; gap:8px; margin-top:12px;">
+    <button class="btn btn-primary" onclick="saveKRows()">💾 Tallenna</button>
+    <div style="flex:1;"></div>
+    <button class="btn btn-secondary" onclick="closeAddKModal()">Peruuta</button>
+  </div>
+
+  <div style="margin-top:8px; font-size:12px; color:#666;">
+    ℹ️ Kaikki lisätyt K-arvot tallennetaan odottavina (vaativat hyväksynnän).
+  </div>
+
+</div>
+
+</div>
+
+<!-- K-LIBRARY GROUP MODAL (monirivi: avaus + K) -->
+<div class="modal-overlay" id="klibGroupModal" style="display:none;">
+  <div class="modal-content" style="max-width:820px; width:100%; padding:12px;">
+
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+      <strong id="klibGroupTitle">Venttiili</strong>
       <div style="flex:1;"></div>
-      <button class="btn btn-secondary" onclick="closeAddKModal()">Peruuta</button>
+
+      <button class="btn btn-primary"
+              style="font-size:12px;"
+              onclick="approveAllInOpenGroup()">
+        ✅ Hyväksy kaikki
+      </button>
+
+      <button class="btn btn-secondary"
+              onclick="closeKLibGroup()">
+        ✖ Sulje
+      </button>
     </div>
 
-    <div style="margin-top:8px; font-size:12px; color:#666;">
-      ℹ️ Kaikki K-arvot tallennetaan ehdotuksina. Päällekkäisyydet sallitaan.
+    <div id="klibGroupMeta" style="font-size:12px; color:#666; margin-bottom:10px;"></div>
+
+    <!-- lisää rivi -->
+    <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px;">
+      <input id="klibNewPos" class="input" type="number" step="0.1" placeholder="Avaus">
+      <input id="klibNewK" class="input" type="number" step="0.01" placeholder="K">
+      <button class="btn btn-primary" onclick="addKRowToGroup()">➕ Lisää</button>
+    </div>
+
+    <div style="overflow:auto; max-height:65vh;">
+      <table style="width:100%; border-collapse:collapse; font-size:13px;">
+        <thead>
+          <tr style="background:#f6f7f9;">
+            <th style="padding:8px; text-align:left;">Avaus</th>
+            <th style="padding:8px; text-align:left;">K</th>
+            <th style="padding:8px;">Tila</th>
+            <th style="padding:8px;">Päivitetty</th>
+            <th style="padding:8px;"></th>
+          </tr>
+        </thead>
+        <tbody id="klibGroupRows"></tbody>
+      </table>
     </div>
 
   </div>
 </div>
+
 
     <!-- ADD/EDIT MACHINE VIEW -->
     <div class="view" id="view-add-machine">
@@ -399,7 +518,59 @@
         <button class="btn btn-primary" onclick="saveDuct()">Tallenna</button>
     </div>
 </div>
+<!-- KLIB DETAIL MODAL -->
+<div class="modal-overlay" id="klibDetailModal" style="display:none;">
+  <div class="modal-content" style="max-width:900px; width:100%; padding:14px;">
 
+    <!-- Otsikkorivi -->
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
+      <div style="font-size:16px; font-weight:800;" id="klibDetailTitle">K-arvot</div>
+      <div style="flex:1;"></div>
+      <button class="btn btn-secondary" onclick="closeKLibDetail()">Sulje</button>
+    </div>
+
+    <!-- Suodatus + toiminnot -->
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+      <label style="cursor:pointer; font-size:13px;">
+        <input type="checkbox" id="klibOnlyPending" onchange="renderKLibDetail()">
+        Näytä vain odottavat
+      </label>
+
+      <div style="flex:1;"></div>
+
+      <button class="btn btn-primary"
+              style="font-size:12px; padding:6px 10px;"
+              onclick="klibApproveAllForCurrent()">
+        ✅ Hyväksy kaikki
+      </button>
+    </div>
+
+    <!-- Meta -->
+    <div style="font-size:12px; color:#666; margin-bottom:10px;" id="klibDetailMeta"></div>
+
+    <!-- Taulukko -->
+    <div style="overflow:auto; border:1px solid #e6e6e6; border-radius:10px;">
+      <table class="report" style="width:100%; font-size:13px;">
+        <thead>
+          <tr>
+            <th style="text-align:left;">Avaus</th>
+            <th style="text-align:left;">K</th>
+            <th style="text-align:left;">Tila</th>
+            <th style="text-align:left;">Lähde</th>
+            <th style="text-align:left;">Päiväys</th>
+            <th style="width:1%;"></th>
+          </tr>
+        </thead>
+        <tbody id="klibDetailBody"></tbody>
+      </table>
+    </div>
+
+  </div>
+</div>
+
+  
+  </div>
+</div>
 
     <!-- SETTINGS VIEW -->
     <div class="view" id="view-settings">
@@ -429,7 +600,7 @@
 
         </div>
     </div>
-<<!-- K-LIBRARY ADMIN VIEW -->
+<!-- K-LIBRARY ADMIN VIEW -->
 <div class="view" id="view-klib-admin" style="display:none;">
   <div style="padding:12px; max-width:1200px; margin:0 auto;">
 
@@ -439,7 +610,7 @@
   <button class="btn btn-secondary"
           onclick="showView('view-details')">
       ← Takaisin
-  </button>
+  
 
   <div style="flex:1;">
     <div style="font-size:16px; font-weight:800;">📚 K-kirjasto</div>
@@ -454,11 +625,11 @@
       🔄
   </button>
 
-  <button class="btn btn-primary"
-          title="Lisää K-arvo"
-          onclick="openAddKModal()">
-      ➕
-  </button>
+ <button class="btn btn-primary"
+        onclick="openAddKModal()">
+  ➕ Lisää K-arvo
+</button>
+
 
 </div>
 
@@ -491,52 +662,8 @@
 </div>
 
 
-        <!-- HAKU -->
-        <div style="display:flex; gap:8px; margin-bottom:10px;">
-            <input type="text"
-                   id="klibSearch"
-                   placeholder="Hae: malli, koko, variantti…"
-                   style="flex:1; padding:8px;"
-                   oninput="renderKLibraryAdmin()">
+    
 
-            <select id="klibKindFilter"
-                    onchange="renderKLibraryAdmin()"
-                    style="padding:8px;">
-                <option value="">Kaikki</option>
-                <option value="supply">Tulo</option>
-                <option value="extract">Poisto</option>
-                <option value="damper">Pelti</option>
-                <option value="other">Muu</option>
-            </select>
-        </div>
-
-        <!-- TAULUKKO -->
-        <div style="overflow:auto; border:1px solid #ddd; border-radius:6px;">
-            <table class="report" style="width:100%; font-size:13px;">
-                <thead>
-                    <tr>
-                        <th>Laji</th>
-                        <th>Malli</th>
-                        <th>Koko</th>
-                        <th>Variantti</th>
-                        <th>Avaus</th>
-                        <th>K</th>
-                        <th>Huomio</th>
-                        <th></th>
-                    </tr>
-                </thead>
-                <tbody id="klibTableBody">
-                    <!-- JS täyttää -->
-                </tbody>
-            </table>
-        </div>
-
-        <div style="margin-top:10px; font-size:12px; color:#666;">
-            ⚠️ Sama venttiili + avaus = yksi K-arvo. Uusi tallennus korvaa vanhan automaattisesti.
-        </div>
-
-    </div>
-</div>
 
     <!-- REPORT VIEW -->
     <div class="view" id="view-report">
@@ -681,6 +808,51 @@
 <!-- K-LIBRARY DETAIL MODAL -->
 <div class="modal-overlay" id="klibDetailModal" style="display:none;">
   <div class="modal-content" style="max-width:720px; width:100%; padding:12px;">
+<!-- K-LIBRARY GROUP MODAL (monirivi: avaus + K) -->
+<div class="modal-overlay" id="klibGroupModal" style="display:none;">
+  <div class="modal-content" style="max-width:820px; width:100%; padding:12px;">
+
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+  <strong id="klibGroupTitle">Venttiili</strong>
+  <div style="flex:1;"></div>
+
+  <button class="btn btn-primary"
+          style="font-size:12px;"
+          onclick="approveAllInOpenGroup()">
+    ✅ Hyväksy kaikki
+  </button>
+
+  <button class="btn btn-secondary"
+          onclick="closeKLibGroup()">
+    ✖ Sulje
+  </button>
+</div>
+
+
+    <div id="klibGroupMeta" style="font-size:12px; color:#666; margin-bottom:10px;"></div>
+
+    <!-- monilisäys -->
+    <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px;">
+      <input id="klibNewPos" class="input" type="number" step="0.1" placeholder="Avaus">
+      <input id="klibNewK" class="input" type="number" step="0.01" placeholder="K-arvo">
+      <button class="btn btn-primary" onclick="addKRowToGroup()">➕ Lisää rivi</button>
+    </div>
+
+    <table style="width:100%; font-size:13px;">
+      <thead>
+        <tr>
+          <th style="text-align:left;">Avaus</th>
+          <th style="text-align:left;">K</th>
+          <th style="text-align:center;">Tila</th>
+          <th style="text-align:left;">Päivitetty</th>
+          <th style="text-align:right;">Toiminnot</th>
+        </tr>
+      </thead>
+      <tbody id="klibGroupRows"></tbody>
+    </table>
+
+  </div>
+</div>
 
     <!-- OTSIKKO -->
     <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
@@ -786,14 +958,8 @@
         </div>
     </div>
 
-<button
-    id="projectFab"
-    class="fab"
-    title="Projektit"
-    onclick="openProjectList()"
->
-    📁
-</button>
+
+
     <!-- Poistettu duplikaatti Asunto-modal (aptModal) -->
      <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
 

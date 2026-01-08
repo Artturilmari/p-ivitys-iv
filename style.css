@@ -2845,3 +2845,102 @@ body.modal-open .view {
     border-radius: 8px;
     margin-bottom: 12px;
 }
+.visual-tree {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.tree-node {
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+.machine-node {
+    background: #333;
+    color: #fff;
+    font-weight: bold;
+}
+
+.duct-node {
+    margin-left: 20px;
+    background: #ddd;
+}
+
+.valve-node {
+    margin-left: 40px;
+    background: #f5f5f5;
+    cursor: pointer;
+}
+.map-index-hint {
+    font-size: 13px;
+    color: #666;
+    margin: 6px 0 10px 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.map-info-icon {
+    cursor: pointer;
+    font-weight: bold;
+    color: #555;
+}
+.lane-confidence {
+    font-size: 13px;
+    margin-top: 6px;
+    opacity: 0.9;
+}
+
+.lane-confidence.high {
+    color: #2e7d32;
+}
+
+.lane-confidence.medium {
+    color: #b26a00;
+}
+
+.lane-confidence.low {
+    color: #c62828;
+}
+/* ===============================
+   Valve context menu
+   =============================== */
+
+.valve-context-menu {
+    position: absolute;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+    z-index: 5000;
+    min-width: 200px;
+    overflow: hidden;
+    font-size: 14px;
+}
+
+.vcm-item {
+    padding: 10px 14px;
+    cursor: pointer;
+    border-bottom: 1px solid #eee;
+}
+
+.vcm-item:last-child {
+    border-bottom: none;
+}
+
+.vcm-item:hover {
+    background: #f5f7fa;
+}
+
+.vcm-primary {
+    font-weight: bold;
+    color: #1976d2;
+}
+
+.vcm-info {
+    color: #666;
+    cursor: default;
+    background: #fafafa;
+}
