@@ -86,96 +86,151 @@
 </div>
 
     <!-- DETAILS VIEW -->
-    <div class="view" id="view-details">
-        <div style="padding: 15px;">
-            <h3 id="currentProjectName">Projekti</h3>
-              <!-- 🔽 KÄYTTÄJÄN TILAVIHJE -->
+<div class="view" id="view-details">
+    <div style="padding: 15px;">
+
+        <!-- 🔧 PROJEKTIN NIMI -->
+        <h3 id="currentProjectName">Projekti</h3>
+
+        <!-- 🔽 KÄYTTÄJÄN TILAVIHJE -->
         <div id="workflowHint"
-        style="margin:10px 0;padding:10px;border-radius:8px;
-               background:#eef2ff;color:#1a237e;
-               font-weight:bold;font-size:13px;">
-   </div>
-            <div id="project-actions" style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;">
-                <span style="color:red; font-weight:bold;">
-    DEBUG: PROJECT ACTIONS HERE
-</span>
-
-<button class="btn btn-secondary" onclick="showAddValve('extract')">
-    + Lisää poistoventtiili
-</button>                <button class="btn btn-primary" onclick="showVisual()" style="width:auto; padding:8px 12px;">📊 Näytä kaavio</button>
-                <button class="btn btn-secondary" onclick="showRelativeAdjustPanel()" style="width:auto; padding:8px 12px; background-color: #e65100; color: white;">⚖️ Suhteellinen säätö</button>
-                <button class="btn btn-secondary" onclick="showBalance()" style="width:auto; padding:8px 12px;">⚖️ Tasapaino</button>
-                <button class="btn btn-secondary" onclick="optimizeEnergy()" style="width:auto; padding:8px 12px;">⚡ Optimoi</button>
-<button class="btn btn-secondary" onclick="openReportView()" style="width:auto; padding:8px 12px;">
-    📄 Pöytäkirja
-</button>
-<button class="btn btn-secondary"
-        onclick="openKLibraryAdmin()"
-        style="width:auto; padding:8px 12px;">
-    📚 K-kirjasto
-</button>
-               <button class="btn btn-secondary" onclick="showReportRoof()" style="width:auto; padding:8px 12px;">📄 Näytä pöytäkirja: Huippuimuri</button>
-                    <button class="btn btn-secondary" onclick="(window.showChart?showChart():alert('Kaavion näyttö ei ole vielä käytettävissä'))" style="width:auto; padding:8px 12px;">📈 Näytä kaavio</button>
-                <button class="btn btn-secondary" onclick="showSettings()" style="width:auto; padding:8px 12px;">⚙️ Asetukset</button>
-            </div>
-            <div class="mode-selector" id="modeSelector">
-                <button class="mode-btn active" id="btnModeHome" onclick="setMode('home')">Home</button>
-                <button class="mode-btn" id="btnModeAway" onclick="setMode('away')">Away</button>
-                <button class="mode-btn" id="btnModeBoost" onclick="setMode('boost')">Boost</button>
-            </div>
-
-            <div class="copy-controls">
-                <div style="font-size:10px; font-weight:bold; padding-top:6px;">KOPIOI TILAAN:</div>
-                <button class="copy-btn" onclick="copyModeData('away')">→ Poissa</button>
-                <button class="copy-btn" onclick="copyModeData('home')">→ Kotona</button>
-                <button class="copy-btn" onclick="copyModeData('boost')">→ Tehostus</button>
-            </div>
-            
-            <h4>IV-Koneet</h4>
-            <div style="background:#fff; padding:10px; margin:10px 0; border:1px solid #ccc; border-radius:8px; display:flex; align-items:center; gap:10px;">
-                <label style="margin:0; font-weight:bold;">Suodata:</label>
-                <select id="apartmentFilter" onchange="renderDetailsList()" style="margin:0; flex:1; font-weight:bold; padding:8px;">
-                    <option value="all">Näytä kaikki</option>
-                </select>
-            </div>
-
-            <div id="machineList"></div>
-            <button class="btn btn-secondary" onclick="showAddMachine()">+ Kone</button>
-            
-            <h4 style="margin-top: 20px;">Runkokanavat</h4>
-            <div id="ductList"></div>
-            <button class="btn btn-outline" onclick="showAddDuct()" style="background: transparent; border: 2px solid #ccc; color: #555; margin-top: 10px;">+ Lisää runkokanava</button>
-            
-            <h4 style="margin-top: 20px;">Venttiilit</h4>
-
-<div id="valveList">
-    <!-- renderDetailsList() täyttää tämän -->
-</div>
-<h4>Mittalista</h4>
-
-<div style="margin-top:8px;">
-<button class="btn btn-primary" onclick="showAddValve('supply')">
-    + Lisää tuloventtiili
-</button>
-</div>
-
-            <button class="btn btn-secondary" style="margin-top:5px;" onclick="showPressureMeasure()">📏 Mittaa paine-ero (Pa)</button>
-
-            <h4 style="margin-top: 20px;">Paine-erot</h4>
-            <div id="pressureList"></div>
-
-            <div id="sfpDisplay" style="margin-top: 20px; padding: 10px; background: #f0f0f0; border-radius: 8px; font-weight: bold;"></div>
-            <button class="btn btn-danger" onclick="deleteCurrentProject()" style="margin-top: 10px;">🗑️ Poista projekti</button>
+             style="margin:10px 0;padding:10px;border-radius:8px;
+                    background:#eef2ff;color:#1a237e;
+                    font-weight:bold;font-size:13px;">
         </div>
+
+        <!-- 🔧 PROJEKTIN TOIMINNOT -->
+        <div id="project-actions"
+             style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;">
+
+            <button class="btn btn-primary"
+                    onclick="showVisual()"
+                    style="width:auto; padding:8px 12px;">
+                📊 Näytä kaavio
+            </button>
+
+            <button class="btn btn-secondary"
+                    onclick="showRelativeAdjustPanel()"
+                    style="width:auto; padding:8px 12px; background-color:#e65100; color:white;">
+                ⚖️ Suhteellinen säätö
+            </button>
+
+            <button class="btn btn-secondary"
+                    onclick="showBalance()"
+                    style="width:auto; padding:8px 12px;">
+                ⚖️ Tasapaino
+            </button>
+
+            <button class="btn btn-secondary"
+                    onclick="optimizeEnergy()"
+                    style="width:auto; padding:8px 12px;">
+                ⚡ Optimoi
+            </button>
+
+            <button class="btn btn-secondary"
+                    onclick="openReportView()"
+                    style="width:auto; padding:8px 12px;">
+                📄 Pöytäkirja
+            </button>
+
+            <button class="btn btn-secondary"
+                    onclick="openKLibraryAdmin()"
+                    style="width:auto; padding:8px 12px;">
+                📚 K-kirjasto
+            </button>
+
+            <button class="btn btn-secondary"
+                    onclick="showSettings()"
+                    style="width:auto; padding:8px 12px;">
+                ⚙️ Asetukset
+            </button>
+        </div>
+
+        <!-- 🔁 TILAVALINTA -->
+        <div class="mode-selector" id="modeSelector">
+            <button class="mode-btn active" id="btnModeHome" onclick="setMode('home')">Home</button>
+            <button class="mode-btn" id="btnModeAway" onclick="setMode('away')">Away</button>
+            <button class="mode-btn" id="btnModeBoost" onclick="setMode('boost')">Boost</button>
+        </div>
+
+        <!-- 📋 KOPIOINTI TILOJEN VÄLILLÄ -->
+        <div class="copy-controls">
+            <div style="font-size:10px; font-weight:bold; padding-top:6px;">
+                KOPIOI TILAAN:
+            </div>
+            <button class="copy-btn" onclick="copyModeData('away')">→ Poissa</button>
+            <button class="copy-btn" onclick="copyModeData('home')">→ Kotona</button>
+            <button class="copy-btn" onclick="copyModeData('boost')">→ Tehostus</button>
+        </div>
+
+        <!-- 🔧 A-MALLIN KONEPALKKI (PAKOLLINEN) -->
+        <div id="detailsMachineBar" style="margin-top:15px;"></div>
+
+        <!-- 📋 MITTALISTA (A-MALLI) -->
+        <h4 style="margin-top:20px;">Mittalista</h4>
+        <div id="measurementList"></div>
+
+        <div style="margin-top:8px;">
+            <button class="btn btn-primary" onclick="showAddValve('supply')">
+                + Lisää tuloventtiili
+            </button>
+            <button class="btn btn-secondary"
+                    onclick="showAddValve('extract')"
+                    style="margin-left:6px;">
+                + Lisää poistoventtiili
+            </button>
+        </div>
+
+        <button class="btn btn-secondary"
+                style="margin-top:5px;"
+                onclick="showPressureMeasure()">
+            📏 Mittaa paine-ero (Pa)
+        </button>
+
+        <!-- ⚠️ VANHAT LISTAT (EI ENÄÄ KÄYTÖSSÄ A-MALLISSA) -->
+        <div id="machineList" style="display:none;"></div>
+        <div id="ductList" style="display:none;"></div>
+        <div id="valveList" style="display:none;"></div>
+
+        <!-- 📐 PAINE-EROT -->
+        <h4 style="margin-top: 20px;">Paine-erot</h4>
+        <div id="pressureList"></div>
+
+        <!-- ⚙️ SFP -->
+        <div id="sfpDisplay"
+             style="margin-top:20px; padding:10px;
+                    background:#f0f0f0;
+                    border-radius:8px;
+                    font-weight:bold;">
+        </div>
+
+        <!-- ❌ PROJEKTIN POISTO -->
+        <button class="btn btn-danger"
+                onclick="deleteCurrentProject()"
+                style="margin-top:10px;">
+            🗑️ Poista projekti
+        </button>
+
     </div>
+</div>
 
     <!-- VISUAL/SCHEMATIC VIEW -->
     <div class="view" id="view-visual">
         <div style="background:#333; padding:10px; display:flex; gap:10px; position:sticky; top:0; z-index:100;">
             <div id="visModeButtons" style="display:flex; gap:5px; flex:1;">
-                <button class="btn btn-secondary" style="margin:0; padding:5px 10px; font-size:12px;" onclick="setVisualMode('vertical')">🏢 Pysty</button>
+              
+
+         <button class="btn btn-secondary" style="margin:0; padding:5px 10px; font-size:12px;" onclick="setVisualMode('vertical')">🏢 Pysty</button>
                 <button class="btn btn-secondary" style="margin:0; padding:5px 10px; font-size:12px;" onclick="setVisualMode('horizontal')">🏠 Vaaka</button>
             </div>
+            <div id="mapViewSelector"
+     style="
+        display:flex;
+        gap:6px;
+        align-items:center;
+     ">
+</div>
+
             <div style="display:flex; gap:5px;">
                 <button class="btn btn-secondary" style="margin:0; padding:5px 10px;" onclick="zoomVisual(0.1)">🔍+</button>
                 <button class="btn btn-secondary" style="margin:0; padding:5px 10px;" onclick="zoomVisual(-0.1)">🔍-</button>
