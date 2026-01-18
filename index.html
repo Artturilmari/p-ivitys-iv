@@ -232,17 +232,46 @@
 </div>
 
             <div style="display:flex; gap:5px;">
-                <button class="btn btn-secondary" style="margin:0; padding:5px 10px;" onclick="zoomVisual(0.1)">🔍+</button>
-                <button class="btn btn-secondary" style="margin:0; padding:5px 10px;" onclick="zoomVisual(-0.1)">🔍-</button>
-            </div>
+    <button class="btn btn-secondary"
+            style="margin:0; padding:5px 10px;"
+            onclick="zoomVisual(0.1)">🔍+</button>
+
+    <button class="btn btn-secondary"
+            style="margin:0; padding:5px 10px;"
+            onclick="zoomVisual(-0.1)">🔍-</button>
+
+    <button class="btn btn-secondary"
+            style="margin:0; padding:5px 10px;"
+            onclick="fitMapToScreen()"
+            title="Sovita kartta näkymään">
+        ⛶
+    </button>
+</div>
+
         </div>
 
         <div id="relativeAdjustPanel" style="display: none; padding: 0 15px;"></div>
         <div id="visRoofBar" style="position:sticky; top:46px; z-index:90; background:#fafafa; border-bottom:1px solid #ddd; padding:8px 12px; display:flex; gap:12px; align-items:center;"></div>
 
         <div id="visScrollArea" style="overflow:auto; height:80vh; background:#eef; position:relative;">
-            <div id="visContent" style="transform-origin: 0 0; transition: transform 0.1s ease; padding:50px; min-height:1000px; min-width:1000px;">
-            </div>
+            <div id="visContent"
+     style="transform-origin: 0 0; transition: transform 0.1s ease;
+            padding:50px; min-height:1000px; min-width:1000px;">
+
+    <!-- VIEWPORT (näkyvä alue) -->
+    <div id="mapViewport"
+         style="position:relative; width:100%; height:100%; overflow:hidden; touch-action:none;">
+
+        <!-- WORLD (zoom & pan liikuttaa tätä) -->
+        <div id="mapWorld"
+             style="position:absolute; left:0; top:0; transform-origin:0 0;">
+            <!-- tänne piirretään jatkossa koneet / rungot / venttiilit -->
+        </div>
+
+    </div>
+
+</div>
+
         </div>
     </div>
 

@@ -389,7 +389,15 @@ table.report th { background: #f0f0f0; }
 
 /* --- KERROSTALO-NÄKYMÄN TYYLIT (FINAL) --- */
 /* Rullattava alue (valinnainen kääre jos käytössä) */
-#visScrollArea{overflow:auto;height:80vh;background:#eef;position:relative;touch-action:pan-x pan-y}
+#visScrollArea {
+    overflow: hidden;        /* ❗ EI auto */
+    height: 80vh;
+    background: #eef;
+    position: relative;
+
+    /* Pan hoidetaan JS:llä, ei selaimella */
+    touch-action: none;
+}
 /* Pääalue: Tornit vierekkäin */
 #visContent{transform-origin:0 0;transition:transform 0.2s ease;padding:16px;display:flex;flex-direction:row;align-items:flex-start;gap:24px;min-width:max-content}
 .vis-zoombar{position:fixed;right:16px;bottom:90px;display:flex;flex-direction:column;gap:8px;z-index:3000}
@@ -2530,13 +2538,15 @@ button:disabled {
     align-items: center;
 }
 
-/* Skrollaus pitkälle listalle */
+/* Skrollaus pitkälle listalle (EI automaattista hyppimistä) */
 #measurementList {
-    max-height: 65vh;
+    height: calc(100vh - 180px);   /* vie lähes koko näytön */
+    min-height: 600px;
     overflow-y: auto;
-    border: 1px solid #ddd;
-    border-radius: 8px;
+    overflow-anchor: none;         /* estää scroll-hypyt */
 }
+
+
 /* Venttiilirivi neutraaliksi */
 .measure-table tr {
     background:#fff;
@@ -2638,12 +2648,7 @@ button:disabled {
 .measure-table button {
     cursor: pointer;
 }
-.measurement-table {
-    width: 100%;
-    border-collapse: collapse;
-    margin-bottom: 12px;
-    background: #fff;
-}
+
 
 .measurement-table th,
 .measurement-table td {
@@ -3021,4 +3026,853 @@ body.modal-open .view {
     border-color: #1976d2;
     background: #e3f2fd;
     box-shadow: 0 0 0 2px rgba(25,118,210,0.25);
+}
+/* =========================
+   VENTTIILIKORTTI – HYBRIDI (AMMATTIMALLI)
+   ========================= */
+
+.map-valve {
+    background: #ffffff;
+    border-radius: 10px;
+    padding: 8px 10px;
+    min-width: 145px;
+    border: 2px solid #d0d0d0;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+    position: relative;
+    transition: transform .12s ease, box-shadow .12s ease;
+    font-size: 12px;
+}
+
+.map-valve:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+}
+
+/* =========================
+   INDEKSIVENTTIILI
+   ========================= */
+
+.map-valve.valve-index {
+    border-color: #7b1fa2;
+    background: #f6e9fb;
+}
+
+.index-badge {
+    position: absolute;
+    top: -11px;
+    left: 8px;
+    background: #7b1fa2;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 9px;
+    border-radius: 12px;
+    letter-spacing: 0.4px;
+}
+
+/* =========================
+   HUONE / NIMI
+   ========================= */
+
+.map-room {
+    font-weight: 700;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+}
+
+/* =========================
+   METRIIKAT
+   ========================= */
+
+.map-metrics {
+    font-size: 11px;
+    line-height: 1.35;
+}
+
+.map-metrics span {
+    display: block;
+}
+
+/* =========================
+   SUHDELUKU – VISUAALINEN PÄÄASIA
+   ========================= */
+
+.map-metrics span:nth-child(3) {
+    font-size: 15px;
+    font-weight: 800;
+    margin: 4px 0;
+}
+
+/* vajaata → sininen */
+.map-valve[data-ratio-low="true"] {
+    background: #e3f2fd;
+    border-color: #64b5f6;
+}
+
+/* liikaa → oranssi */
+.map-valve[data-ratio-high="true"] {
+    background: #fff3e0;
+    border-color: #ff9800;
+}
+
+/* lähellä 1.0 → neutraali */
+.map-valve[data-ratio-ok="true"] {
+    background: #f4f6f8;
+    border-color: #9e9e9e;
+}
+
+/* =========================
+   OHJE (AVAA / KURISTA / OK)
+   ========================= */
+
+.valve-hint {
+    margin-top: 6px;
+    padding-top: 4px;
+    border-top: 1px dashed rgba(0,0,0,0.15);
+    font-size: 13px;
+    font-weight: 700;
+}
+
+/* AVAA */
+.map-valve.valve-open .valve-hint {
+    color: #1565c0;
+}
+
+/* KURISTA */
+.map-valve.valve-close .valve-hint {
+    color: #d84315;
+}
+
+/* OK */
+.map-valve.valve-ok .valve-hint {
+    color: #2e7d32;
+}
+
+/* =========================
+   AKTIIVINEN VENTTIILI
+   ========================= */
+
+.map-valve-active {
+    outline: 3px solid #2196f3;
+    outline-offset: 2px;
+}
+
+/* =========================
+   INDEKSIVENTTIILI – LUKITTU ILME
+   ========================= */
+
+.map-valve.valve-index {
+    background: linear-gradient(135deg, #f3e5f5 0%, #ede7f6 100%);
+    border-color: #7b1fa2;
+}
+
+
+
+/* Badge vahvemmaksi */
+.map-valve.valve-index .index-badge {
+    background: #7b1fa2;
+    color: #ffffff;
+    font-weight: 900;
+    letter-spacing: 0.4px;
+    box-shadow: 0 2px 6px rgba(123, 31, 162, 0.35);
+}
+
+/* Suhde-badge indeksille vielä vahvempi */
+.map-valve.valve-index .ratio-badge {
+    background: #7b1fa2;
+    color: #ffffff;
+    border-color: #7b1fa2;
+}
+
+/* Avausohje indeksille – neutraali */
+.map-valve.valve-index .valve-hint {
+    color: #7b1fa2;
+    font-weight: 700;
+}
+/* =========================
+   IV-KONE – RUNKONÄKYMÄN INFO
+   ========================= */
+
+.map-machine-row {
+    margin-bottom: 12px;
+}
+
+.machine-info-card {
+    background: #ffffff;
+    border: 2px solid #90caf9;
+    border-radius: 12px;
+    padding: 12px 14px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+    max-width: 360px;
+}
+
+.machine-info-header {
+    font-size: 16px;
+    font-weight: 800;
+    color: #0d47a1;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+}
+
+.machine-mode {
+    font-size: 12px;
+    font-weight: 700;
+    color: #1976d2;
+    background: #e3f2fd;
+    padding: 2px 8px;
+    border-radius: 999px;
+}
+
+.machine-info-body {
+    font-size: 13px;
+}
+
+.machine-info-body .mi-row {
+    margin-top: 4px;
+}
+/* =========================
+   RUNKO PUTKENA (IV-KARTTA)
+   ========================= */
+
+.trunk-pipe {
+    margin: 18px 0 28px 0;
+    position: relative;
+}
+
+/* VARSINAINEN PUTKI */
+.trunk-pipe-line {
+    height: 10px;
+    background: linear-gradient(
+        to bottom,
+        #b0bec5 0%,
+        #eceff1 40%,
+        #b0bec5 100%
+    );
+    border-radius: 6px;
+    position: relative;
+    cursor: pointer;
+}
+
+/* PUTKEN NIMI */
+.trunk-name {
+    position: absolute;
+    top: -18px;
+    left: 0;
+    font-size: 12px;
+    font-weight: 700;
+    color: #455a64;
+}
+
+/* VENTTIILIT KIINNI PUTKESSA */
+.map-valves-row.pipe-attached {
+    display: flex;
+    gap: 10px;
+    margin-top: -6px; /* kiinnitys putkeen */
+    padding-left: 6px;
+}
+
+/* VENTTIILIN "VARSI" PUTKEEN */
+.map-valve::before {
+    content: '';
+    position: absolute;
+    top: -8px;
+    left: 50%;
+    width: 2px;
+    height: 8px;
+    background: #78909c;
+    transform: translateX(-50%);
+}
+/* VAIHE 2: jokainen venttiili ankkuroituu putkeen */
+.map-valves-row.pipe-attached-2 {
+  display: flex;
+  gap: 18px;
+  align-items: flex-start;
+  position: relative;
+  padding-top: 18px;
+
+  flex-wrap: nowrap;          /* ⛔ EI RIVINVAIHTOA */
+  overflow-x: auto;           /* ✅ rullaa sivulle */
+  padding-bottom: 12px;
+}
+
+
+/* Putki */
+.map-valves-row.pipe-attached-2::before {
+  content: '';
+  position: absolute;
+  top: 6px;
+  left: 0;
+  right: 0;
+  height: 8px;
+  background: linear-gradient(#cfd8dc, #b0bec5);
+  border-radius: 6px;
+}
+
+/* Ankkuri per venttiili */
+.valve-anchor {
+  position: relative;
+  padding-top: 16px;  /* varsi tilaan */
+}
+
+/* Varsi putkesta venttiiliin */
+.valve-anchor::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 2px;
+  height: 16px;
+  background: #90a4ae;
+  transform: translateX(-50%);
+}
+
+/* POISTA vanha roikkupinni suoraan kortista (tärkeä) */
+.map-valve::before {
+  content: none !important;
+}
+/* =========================
+   SUHDELUVUN KOROSTUS
+   ========================= */
+
+.ratio-badge {
+    display: inline-block;
+    padding: 4px 8px;
+    border-radius: 8px;
+    font-weight: bold;
+    font-size: 15px;
+    margin-top: 4px;
+}
+
+/* vajaata */
+.ratio-low {
+    background: #e3f2fd;
+    color: #1565c0;
+}
+
+/* liikaa */
+.ratio-high {
+    background: #fff3e0;
+    color: #e65100;
+}
+
+/* ok */
+.ratio-ok {
+    background: #e8f5e9;
+    color: #2e7d32;
+}
+
+/* indeksi */
+.ratio-index {
+    background: #ede7f6;
+    color: #6a1b9a;
+}
+
+/* ei tietoa */
+.ratio-none {
+    background: #f5f5f5;
+    color: #777;
+}
+.valve-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.valve-ratio {
+  font-size: 20px;
+  font-weight: 800;
+  padding: 4px 10px;
+  border-radius: 10px;
+}
+
+.valve-room {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.valve-flows {
+  font-size: 12px;
+  color: #444;
+}
+
+.valve-meta {
+  font-size: 11px;
+  color: #666;
+  display: flex;
+  gap: 10px;
+}
+/* Putki on ankkuri */
+.trunk-pipe {
+    position: relative;
+}
+
+/* Venttiilirivi */
+.map-valves-row.pipe-attached {
+    position: relative;
+    display: flex;
+    gap: 16px;
+    padding-top: 18px; /* tilaa roikotusviivalle */
+}
+
+/* Venttiilin ankkuri putkeen */
+.valve-anchor {
+    position: relative;
+}
+
+/* ROIKOTUSVIIVA PUTKESTA KORTTIIN */
+.valve-anchor::before {
+    content: '';
+    position: absolute;
+    top: -18px;
+    left: 50%;
+    width: 2px;
+    height: 18px;
+    background: #9aa7b2;
+    transform: translateX(-50%);
+}
+/* SUHDELUKU – perus */
+.valve-ratio {
+    font-size: 18px;
+    font-weight: 700;
+    padding: 6px 10px;
+    border-radius: 8px;
+    display: inline-block;
+}
+
+/* INDEKSI – TUMMA */
+.valve-ratio.ratio-index {
+    background: #6a1b9a;          /* tumma violetti */
+}
+/* ALIVIRTA */
+.valve-ratio.ratio-low {
+    background: #1565c0;          /* tumma sininen */
+}
+
+/* YLIVIRTA */
+.valve-ratio.ratio-high {
+    background: #ef6c00;          /* tumma oranssi */
+}
+
+/* OK */
+.valve-ratio.ratio-ok {
+    background: #2e7d32;          /* tumma vihreä */
+}
+/* YDIN: SUHDELUKU */
+.valve-ratio {
+    color: #fff;                 /* ⬅ PAKOTETAAN VALKOINEN */
+    font-weight: 700;
+    border-radius: 999px;
+    padding: 6px 12px;
+    display: inline-block;
+    min-width: 48px;
+    text-align: center;
+}
+
+
+
+/* INDEKSI */
+.map-valve.valve-index .valve-ratio {
+    background: #6a1b9a;
+}
+
+/* ALIVIRTA */
+.valve-ratio.ratio-low {
+    background: #0d47a1;
+}
+
+/* YLIVIRTA */
+.valve-ratio.ratio-high {
+    background: #e65100;
+}
+
+/* OK */
+.valve-ratio.ratio-ok {
+    background: #1b5e20;
+}
+/* ===== VENTTIILIN RIPUSTUS PUTKESTA ===== */
+
+.valve-anchor {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+/* PYSTYVIIVA PUTKESTA KORTTIIN */
+.valve-drop-line {
+    width: 2px;
+    height: 16px;
+    background: #9e9e9e;
+    margin-bottom: 4px;
+}
+
+/* Varmistaa että kortti on linjassa putken alla */
+.pipe-attached-2 {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+}
+#mapViewport {
+    overflow: hidden;
+    width: 100%;
+    height: calc(100vh - 220px); /* desktop */
+    position: relative;
+}
+
+#mapWorld {
+    will-change: transform;
+    transform-origin: 0 0;
+}
+
+.valve-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #888;
+    margin: 6px auto;
+    cursor: pointer;
+}
+
+.valve-dot-index {
+    box-shadow: 0 0 0 3px rgba(255, 215, 0, 0.6);
+}
+
+.valve-dot-green { background: #4caf50; }
+.valve-dot-yellow { background: #ffc107; }
+.valve-dot-red { background: #f44336; }
+.valve-dot {
+    cursor: zoom-in;
+}
+.valve-dot-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    cursor: zoom-in;
+    margin: 4px 6px;
+    font-size: 11px;
+}
+
+.valve-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #888;
+    margin-bottom: 2px;
+}
+
+.valve-dot-label {
+    max-width: 70px;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: #333;
+}
+
+/* Värikoodaus */
+.valve-dot-green { background: #4caf50; }
+.valve-dot-yellow { background: #ffc107; }
+.valve-dot-red { background: #f44336; }
+
+.valve-dot-index {
+    box-shadow: 0 0 0 3px rgba(255, 215, 0, 0.6);
+}
+.map-valves-row {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 16px;
+
+    /* EI RIVITYSTÄ */
+    flex-wrap: nowrap;
+
+    /* Kartta saa kasvaa sivusuunnassa */
+    overflow: visible;
+}
+.trunk-pipe {
+    min-width: max-content;
+}
+/* ─────────────────────────────────────────────
+   📊 V3 MITTALISTA – EXCEL-MÄINEN TAULUKKO
+   ───────────────────────────────────────────── */
+
+/* Listan container: enemmän tilaa, ei hyppyjä */
+#measurementList {
+    max-height: 88vh;
+    overflow-y: auto;
+    overflow-anchor: none; /* estää selaimen scroll-ankkuroinnin */
+}
+
+/* Taulukko */
+.measurement-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    font-size: 13px;
+    background: #0f1115;
+    color: #e6e6e6;
+}
+
+
+
+
+
+
+/* Numerokentät tiiviimmäksi */
+.measurement-table input[type="number"] {
+    text-align: right;
+}
+
+
+
+/* % / suhde */
+.measurement-table .relative {
+    text-align: right;
+    padding: 0 6px;
+    font-weight: 600;
+    color: #9fd3ff;
+    font-size: 12px;
+}
+
+/* Toiminnot */
+.measurement-table .row-actions {
+    display: flex;
+    gap: 2px;
+    justify-content: center;
+}
+
+.measurement-table .row-actions button {
+    background: transparent;
+    border: none;
+    color: #aaa;
+    cursor: pointer;
+    font-size: 12px;
+    padding: 0 4px;
+}
+
+.measurement-table .row-actions button:hover {
+    color: #fff;
+}
+
+/* Sarakeleveydet (Excel-tyylinen) */
+.measurement-table th:nth-child(1),
+.measurement-table td:nth-child(1) { width: 14%; } /* Huone */
+
+.measurement-table th:nth-child(2),
+.measurement-table td:nth-child(2) { width: 18%; } /* Päätelaite */
+
+.measurement-table th:nth-child(3),
+.measurement-table td:nth-child(3) { width: 7%; }  /* Pa */
+
+.measurement-table th:nth-child(4),
+.measurement-table td:nth-child(4) { width: 8%; }  /* Avaus */
+
+.measurement-table th:nth-child(5),
+.measurement-table td:nth-child(5) { width: 7%; }  /* K */
+
+.measurement-table th:nth-child(6),
+.measurement-table td:nth-child(6) { width: 9%; }  /* L/s */
+
+.measurement-table th:nth-child(7),
+.measurement-table td:nth-child(7) { width: 9%; }  /* Suunn */
+
+.measurement-table th:nth-child(8),
+.measurement-table td:nth-child(8) { width: 6%; }  /* % */
+
+.measurement-table th:nth-child(9),
+.measurement-table td:nth-child(9) { width: 6%; }  /* Nappulat */
+
+/* Autocomplete (V3-yhteensopiva, erottuva) */
+.autocomplete-box {
+    background: #1a2030 !important;
+    border: 1px solid #3a4470 !important;
+    color: #fff;
+}
+
+.autocomplete-item {
+    font-size: 13px;
+}
+
+.autocomplete-item:hover {
+    background: #2a3355 !important;
+}
+/* ===============================
+   MITTALISTA V3 – EXCEL-TYYLI
+   =============================== */
+
+#measurementList {
+    background: #ffffff;
+    color: #222;
+}
+
+#measurementList table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+#measurementList th,
+#measurementList td {
+    background: #ffffff;
+    color: #222;
+    border: 1px solid #ddd;
+    padding: 4px 6px;
+    font-size: 13px;
+}
+
+#measurementList tr:hover td {
+    background: #f5f8ff;
+}
+/* V3 mittalista VALEA excel-tyyli */
+.measurement-table{
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    font-size: 13px;
+    background: #fff;
+    color: #222;
+}
+
+.measurement-table thead th{
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: #f3f5f7;
+    color: #222;
+    font-weight: 700;
+    padding: 6px 6px;
+    border-bottom: 1px solid #ddd;
+    text-align: left;
+    white-space: nowrap;
+}
+
+.measurement-table tbody tr:nth-child(even){
+    background: #fafafa;
+}
+
+.measurement-table tbody tr:hover{
+    background: #f5f8ff;
+}
+
+.measurement-table td{
+    padding: 0;
+    border-bottom: 1px solid #eee;
+    vertical-align: middle;
+}
+
+.measurement-table input{
+    width: 100%;
+    height: 26px;
+    box-sizing: border-box;
+    border: none;
+    background: transparent;
+    color: #222;
+    padding: 2px 6px;
+    font-size: 13px;
+    outline: none;
+}
+
+.measurement-table input:focus{
+    background: #fff;
+    box-shadow: inset 0 0 0 2px rgba(33,150,243,0.35);
+}
+
+.measurement-table tr.draft-row{
+    background: #fff;
+}
+.measurement-table tr.draft-row input{
+    color: #888;
+    font-style: italic;
+}
+.group-header {
+  background: #f3f6fa;
+  font-weight: 600;
+}
+
+.group-title {
+  float: left;
+}
+
+.group-status {
+  float: right;
+  font-weight: bold;
+}
+.room-cell {
+  white-space: nowrap;
+}
+
+.index-star {
+  margin-right: 4px;
+  font-size: 13px;
+}
+.adj {
+  margin-left: 4px;
+  font-weight: bold;
+}
+
+.adj.up {
+  color: #c0392b;
+}
+
+.adj.down {
+  color: #2980b9;
+}
+.group-row td {
+    background: #f0f2f4;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 6px;
+    border-top: 1px solid #bbb;
+}
+
+.group-row.supply td { color: #1e8449; }
+.group-row.extract td { color: #922b21; }
+
+.room-cell {
+    white-space: nowrap;
+}
+
+.index-star {
+    margin-right:4px;
+    font-size:13px;
+}
+/* %-sarakkeen peruslook */
+.measurement-table td.relative {
+    font-weight: 700;
+    font-size: 13px;
+    white-space: nowrap;
+}
+
+/* Värisävyt kentälle (hieman tummemmat kuin webissä) */
+.measurement-table td.relative.low {
+    color: #b03a2e; /* punainen */
+}
+.measurement-table td.relative.mid {
+    color: #af601a; /* oranssi */
+}
+.measurement-table td.relative.ok {
+    color: #1e8449; /* vihreä */
+}
+.measurement-table td.relative.high {
+    color: #1f618d; /* sininen */
+}
+.index-star {
+    margin-right: 4px;
+    font-size: 12px;
+    opacity: 0.7;
+}
+.measurement-table td,
+.measurement-table th {
+    padding: 4px 6px;
+}
+
+.measurement-table input {
+    height: 26px;
+    font-size: 13px;
+    padding: 2px 4px;
 }
