@@ -1758,15 +1758,25 @@ function safeNowFiTime() {
  *
  * Palauttaa report-olion, jota voidaan käyttää Excel/PDF/Word -exporteissa.
  */
-function resolveValveFlowType(valve, duct) {
-    if (valve.flowType === 'supply' || valve.flowType === 'extract') {
-        return valve.flowType;
+function resolveValveFlow(v) {
+    if (!v) return null;
+
+    // jos käyttäjä syötti manuaalisen flow'n, älä laske
+    if (v.__manualFlow === true) return v.flow;
+
+    const k = Number(v.kWorking);
+    const p = Number(v.measuredP);
+
+    if (!isFinite(k) || !isFinite(p) || p <= 0) {
+        v.flowCalc = null;
+        return null;
     }
-    if (duct?.type === 'supply' || duct?.type === 'extract') {
-        return duct.type;
-    }
-    return 'extract'; // turvallinen fallback
+
+    const calc = k * Math.sqrt(p);
+    v.flowCalc = calc;
+    return calc;
 }
+
 function getUnifiedReport({ projectId = activeProjectId, machineId = null, mode = null } = {}) {
     const p = projects.find(x => x.id === projectId);
     if (!p) {
@@ -5400,6 +5410,10 @@ d.valves.forEach((v, index) => {
         }
 
         // 🔄 Päivitä mittalista (EI renderDetailsList!)
+        if (typeof renderDetailsList === 'function') {
+    renderDetailsList();
+}
+
         
         // 🔄 Päivitä kartta
 const vis = document.getElementById('visContent');
@@ -5439,27 +5453,27 @@ function searchValveTypes(query) {
     const q = (query || '').toLowerCase();
     if (!q) return [];
 
-    // 🔑 OIKEA TIETOLÄHDE
-    const db =
-        typeof valveDB !== 'undefined'
-            ? valveDB
-            : (window.valveDB || {});
-
     const results = [];
     const seen = new Set();
 
-    Object.keys(db).forEach(type => {
-        const label = formatValveDisplay(type).toLowerCase();
-        if (label.includes(q)) {
-            if (!seen.has(type)) {
-                results.push({ type, source: 'manufacturer' });
-                seen.add(type);
+    const p = projects.find(x => x.id === activeProjectId);
+    if (!p || !p.kLibrary || !Array.isArray(p.kLibrary.groups)) return [];
+
+    p.kLibrary.groups.forEach(g => {
+        (g.valves || []).forEach(v => {
+            if (!v.type) return;
+            const label = String(v.type).toLowerCase();
+            if (label.includes(q) && !seen.has(v.type)) {
+                results.push({ type: v.type });
+                seen.add(v.type);
             }
-        }
+        });
     });
 
-    return results.slice(0, 15);
+    return results;
 }
+
+
 
 function getActiveProject() {
     return window.projects?.find(p => p.id === window.activeProjectId) || null;
@@ -5589,10 +5603,35 @@ if (typeof bindMeasurementListV3 === 'function') {
 }
 
 
+function deleteValveById(valveId) {
+    if (!valveId) return;
 
-function deleteValveById() {
-    alert('Venttiilin poisto pois käytöstä (Korjaus 1)');
-    return;
+    const ok = window.confirm('Poistetaanko tämä venttiili varmasti kaikkialta projektista?');
+    if (!ok) return;
+
+    const p = projects.find(x => x.id === activeProjectId);
+    if (!p) return;
+
+    const machine = getActiveMachine(p);
+    const mode = window.currentMode || 'home';
+    const ducts = machine?.modes?.[mode]?.ducts || [];
+
+    for (const duct of ducts) {
+        const idx = (duct.valves || []).findIndex(v => String(v.id) === String(valveId));
+        if (idx >= 0) {
+            duct.valves.splice(idx, 1);
+            break;
+        }
+    }
+
+    // 🔄 päivitä KAIKKI näkymät
+   saveData?.();
+renderDetailsList?.();
+renderHorizontalMap?.();
+if (typeof renderReports === 'function') {
+if (typeof renderReports === 'function') renderReports();
+}
+
 }
 
 /**
@@ -9294,6 +9333,53 @@ function openValvePanel(valveId = null, options = {}) {
         };
     }
 }
+function findKFromKLibrary(project, type, pos) {
+    if (!project || !project.kLibrary) return null;
+    if (!type || pos == null || pos === '') return null;
+
+    const groups = project.kLibrary.groups || [];
+
+    for (const g of groups) {
+        const valves = g.valves || [];
+        for (const v of valves) {
+            if (String(v.type) !== String(type)) continue;
+
+            const openings = v.openings || [];
+            for (const o of openings) {
+                if (Number(o.pos) === Number(pos) && Number.isFinite(Number(o.k))) {
+                    return Number(o.k);
+                }
+            }
+        }
+    }
+
+    return null;
+}
+function resolveWorkingKForValveV3(v, project) {
+    if (!v) return null;
+
+    // 1️⃣ Jos käyttäjä on syöttänyt K:n käsin → älä koske
+    if (v.__manualK === true && Number.isFinite(Number(v.kWorking))) {
+        return Number(v.kWorking);
+    }
+
+    // 2️⃣ Yritä hakea K kirjastosta
+    const kFromLib = findKFromKLibrary(project, v.type, v.pos);
+
+    if (Number.isFinite(kFromLib)) {
+        v.kWorking = kFromLib;
+        v.__manualK = false;
+        return kFromLib;
+    }
+
+    // 3️⃣ Ei löytynyt → jos käyttäjä on joskus syöttänyt käsin, käytä sitä
+    if (Number.isFinite(Number(v.kWorking))) {
+        return Number(v.kWorking);
+    }
+
+    // 4️⃣ Ei mitään → ei K:ta
+    return null;
+}
 
 
 function openValveById(valveId) {
@@ -11199,23 +11285,30 @@ function createDraftValve(duct) {
 
 
 function attachValveAutocomplete(input, onSelect, opts = {}) {
-
     const search = opts.search || (() => []);
+    const returnItem = opts.returnItem === true;
 
     let box = document.createElement('div');
     box.className = 'autocomplete-box';
     box.style.display = 'none';
+
     input.parentNode.style.position = 'relative';
     input.parentNode.appendChild(box);
 
     let activeIndex = -1;
     let currentItems = [];
 
+    function normalizeList(list) {
+        if (!Array.isArray(list)) return [];
+        // hyväksy item, jossa on type TAI label
+        return list.filter(item =>
+            item &&
+            (typeof item.type === 'string' || typeof item.label === 'string')
+        );
+    }
+
     function renderList(list) {
-        // 🔒 TURVA: suodata rikkinäiset rivit
-        list = Array.isArray(list)
-            ? list.filter(item => item && typeof item.type === 'string')
-            : [];
+        list = normalizeList(list);
 
         box.innerHTML = '';
         currentItems = list;
@@ -11226,47 +11319,54 @@ function attachValveAutocomplete(input, onSelect, opts = {}) {
             return;
         }
 
-        list.forEach((item, i) => {
+        list.forEach((item) => {
             const div = document.createElement('div');
             div.className = 'autocomplete-item';
-            div.innerHTML = `
-                <span>${typeof formatValveDisplay === 'function'
-                    ? formatValveDisplay(item.type)
-                    : item.type}</span>
-                ${item.source === 'user'
-                    ? '<span class="tag tag-user">★</span>'
-                    : ''}
-            `;
-            div.addEventListener('mousedown', e => {
+
+            const text = (typeof item.label === 'string' && item.label.trim() !== '')
+                ? item.label
+                : item.type;
+
+            div.innerHTML = `<span>${text}</span>`;
+
+            div.addEventListener('mousedown', (e) => {
                 e.preventDefault();
-                select(item.type);
+                select(item);
             });
+
             box.appendChild(div);
         });
 
         box.style.display = 'block';
     }
 
-    function select(type) {
-        const shown = (typeof formatValveDisplay === 'function')
-            ? formatValveDisplay(type)
-            : type;
+    function select(item) {
+        // value = mitä laitetaan inputtiin (numero), label = mitä näytetään listassa
+        const value =
+            item && (item.value ?? item.type ?? item.label);
 
-        input.value = shown;
-        input.dataset.raw = type;
+        // number-input ei hyväksy "2 (K 2.00)" -> pakota numero merkkijonona
+        const setVal = (input.type === 'number')
+            ? String(value ?? '').replace(',', '.')
+            : String(value ?? '');
+
+        input.value = setVal;
+        input.dataset.raw = String(value ?? '');
+
         box.style.display = 'none';
-        onSelect(type);
+
+        if (returnItem) onSelect(item);
+        else onSelect(String(value ?? ''));
     }
 
     input.addEventListener('input', () => {
-    console.log('⌨️ autocomplete input:', input.value);
-    const list = search(input.value);
-    console.log('🔍 search result:', list);
-    renderList(list);
-});
+        console.log('⌨️ autocomplete input:', input.value);
+        const list = search(input.value);
+        console.log('🔍 search result:', list);
+        renderList(list);
+    });
 
-
-    input.addEventListener('keydown', e => {
+    input.addEventListener('keydown', (e) => {
         if (!currentItems.length) return;
 
         if (e.key === 'ArrowDown') {
@@ -11275,10 +11375,9 @@ function attachValveAutocomplete(input, onSelect, opts = {}) {
         } else if (e.key === 'ArrowUp') {
             e.preventDefault();
             activeIndex = Math.max(activeIndex - 1, 0);
-       } else if (e.key === 'Enter') {
-    e.preventDefault();
-if (activeIndex >= 0) select(currentItems[activeIndex].type);
-
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            if (activeIndex >= 0) select(currentItems[activeIndex]);
         } else if (e.key === 'Escape') {
             box.style.display = 'none';
         }
@@ -11288,12 +11387,13 @@ if (activeIndex >= 0) select(currentItems[activeIndex].type);
         );
     });
 
-    document.addEventListener('click', e => {
+    document.addEventListener('click', (e) => {
         if (!box.contains(e.target) && e.target !== input) {
             box.style.display = 'none';
         }
     });
 }
+
 function addDraftValveRow() {
     const p = projects.find(p => p.id === activeProjectId);
     const machine = p && getActiveMachine(p);
@@ -11606,6 +11706,42 @@ function renderMeasurementListV3(listEl, project, machine) {
     const mm = machine.modes?.[mode];
     const ducts = mm?.ducts || [];
 
+    // ✅ Varmista että on aina yksi draft ensimmäisen rungon perässä
+    const ensureDraftExists = () => {
+        const d0 = ducts?.[0];
+        if (!d0) return;
+
+        d0.valves = Array.isArray(d0.valves) ? d0.valves : [];
+
+        // poista ylimääräiset draftit (pidä viimeinen)
+        const drafts = d0.valves.filter(v => v && v.__isDraft);
+        if (drafts.length > 1) {
+            const keepId = drafts[drafts.length - 1].id;
+            d0.valves = d0.valves.filter(v => !(v.__isDraft && String(v.id) !== String(keepId)));
+        }
+
+        const last = d0.valves[d0.valves.length - 1];
+        if (!last || !last.__isDraft) {
+            if (typeof createDraftValve === 'function') {
+                createDraftValve(d0);
+            } else {
+                d0.valves.push({
+                    id: 'draft_' + Date.now(),
+                    __isDraft: true,
+                    room: '',
+                    type: '',
+                    pos: '',
+                    kWorking: '',
+                    measuredP: '',
+                    flow: '',
+                    target: ''
+                });
+            }
+        }
+    };
+
+    ensureDraftExists();
+
     // apu: prosenttiväri
     const getPctColor = (pct) => {
         if (!Number.isFinite(pct)) return '#999';
@@ -11633,14 +11769,10 @@ function renderMeasurementListV3(listEl, project, machine) {
             <tbody>
     `;
 
-    // ─────────────────────────────────────────────
-    // RYHMITELTY RENDER (TULO / POISTO / RUNKO)
-    // ─────────────────────────────────────────────
     ducts.forEach(duct => {
-        const valves = (duct.valves || []).filter(v => !v.__isDraft);
+        const valves = (duct.valves || []);
         if (valves.length === 0) return;
 
-        // ryhmän prosentti
         const sumFlow = valves.reduce((s, v) => {
             const f = (typeof getValveFlowEffective === 'function')
                 ? getValveFlowEffective(v)
@@ -11664,95 +11796,84 @@ function renderMeasurementListV3(listEl, project, machine) {
         `;
 
         valves.forEach(v => {
+            const isDraft = !!v.__isDraft;
+
             const effFlow = (typeof getValveFlowEffective === 'function')
                 ? getValveFlowEffective(v)
                 : (Number.isFinite(Number(v.flow)) ? Number(v.flow) : null);
 
-            const percent = (typeof calcPercent === 'function')
+            const percent = (!isDraft && typeof calcPercent === 'function')
                 ? calcPercent(effFlow, v.target)
                 : null;
 
-            // ⭐ indeksi (totuus vain datasta)
-const isIndex =
-    v._uiIsIndex === true ||
-    v.relativeIndex === true ||
-    v.isIndex === true;
+            const isIndex =
+                v._uiIsIndex === true ||
+                v.relativeIndex === true ||
+                v.isIndex === true;
 
-// % luokka kenttäkäyttöön
-const pctClass =
-    !Number.isFinite(percent) ? '' :
-    percent < 80 ? 'low' :
-    percent < 95 ? 'mid' :
-    percent <= 105 ? 'ok' :
-    'high';
+            const pctClass =
+                !Number.isFinite(percent) ? '' :
+                percent < 80 ? 'low' :
+                percent < 95 ? 'mid' :
+                percent <= 105 ? 'ok' :
+                'high';
 
-html += `
-    <tr data-id="${v.id}">
-        <td class="room-cell">
-            ${isIndex ? '<span class="index-star">⭐</span>' : ''}
-            <input data-f="room" value="${v.room ?? ''}">
-        </td>
+            html += `
+                <tr data-id="${v.id}" class="${isDraft ? 'draft-row' : ''}">
+                    <td class="room-cell">
+                        ${(!isDraft && isIndex) ? '<span class="index-star">⭐</span>' : ''}
+                        <input data-f="room" value="${v.room ?? ''}">
+                    </td>
 
-        <td>
-            <input data-f="type" value="${v.type ?? ''}">
-        </td>
+                    <td>
+                        <input data-f="type"
+                               value="${typeof formatValveDisplay === 'function'
+                                    ? (formatValveDisplay(v.type) || (v.type ?? ''))
+                                    : (v.type ?? '')}"
+                               data-raw="${v.type ?? ''}">
+                    </td>
 
-        <td>
-            <input data-f="measuredP" type="number"
-                   value="${Number.isFinite(Number(v.measuredP)) ? v.measuredP : ''}">
-        </td>
+                    <td>
+                        <input data-f="measuredP" type="number"
+                               value="${Number.isFinite(Number(v.measuredP)) ? v.measuredP : ''}">
+                    </td>
 
-        <td>
-            <input data-f="pos" type="number"
-                   value="${Number.isFinite(Number(v.pos)) ? v.pos : ''}">
-        </td>
+                    <td> <input data-f="pos" type="text" inputmode="numeric"
+       value="${Number.isFinite(Number(v.pos)) ? v.pos : ''}">
 
-        <td>
-            <input data-f="kWorking" type="number" step="0.01"
-                   value="${Number.isFinite(Number(v.kWorking)) ? v.kWorking : ''}">
-        </td>
 
-        <td>
-            <input data-f="flow" type="number" step="0.1"
-                   value="${Number.isFinite(Number(effFlow)) ? effFlow.toFixed(1) : ''}">
-        </td>
+                    </td>
 
-        <td>
-            <input data-f="target" type="number" step="0.1"
-                   value="${Number.isFinite(Number(v.target)) ? v.target : ''}">
-        </td>
+                    <td>
+                        <input data-f="kWorking" type="number" step="0.01"
+                               value="${Number.isFinite(Number(v.kWorking)) ? v.kWorking : ''}">
+                    </td>
 
-        <td class="relative ${pctClass}">
-            ${Number.isFinite(percent) ? Math.round(percent) + ' %' : '-'}
-        </td>
+                    <td>
+                        <input data-f="flow" type="number" step="0.1"
+                               value="${(typeof effFlow === 'number' && isFinite(effFlow)) ? effFlow.toFixed(1) : ''}">
+                    </td>
 
-        <td class="row-actions">
-            <button data-act="up" type="button">↑</button>
-            <button data-act="down" type="button">↓</button>
-            <button data-act="delete" type="button">🗑</button>
-        </td>
-    </tr>
-`;
+                    <td>
+                        <input data-f="target" type="number" step="0.1"
+                               value="${Number.isFinite(Number(v.target)) ? v.target : ''}">
+                    </td>
 
+                    <td class="relative ${pctClass}">
+                        ${(!isDraft && Number.isFinite(percent)) ? Math.round(percent) + ' %' : '-'}
+                    </td>
+
+                    <td class="row-actions">
+                        ${isDraft ? '' : `
+                            <button data-act="up" type="button">↑</button>
+                            <button data-act="down" type="button">↓</button>
+                            <button data-act="delete" type="button">🗑</button>
+                        `}
+                    </td>
+                </tr>
+            `;
         });
     });
-
-    // ─────────────────────────────────────────────
-    // DRAFT-RIVI (AINA LOPPUUN)
-    // ─────────────────────────────────────────────
-    html += `
-        <tr class="draft-row">
-            <td><input data-f="room" value=""></td>
-            <td><input data-f="type" value=""></td>
-            <td><input data-f="measuredP" type="number"></td>
-            <td><input data-f="pos" type="number"></td>
-            <td><input data-f="kWorking" type="number" step="0.01"></td>
-            <td><input data-f="flow" type="number" step="0.1"></td>
-            <td><input data-f="target" type="number" step="0.1"></td>
-            <td class="relative">-</td>
-            <td></td>
-        </tr>
-    `;
 
     html += `
             </tbody>
@@ -11766,8 +11887,10 @@ html += `
 function bindMeasurementListV3(container) {
     if (!container) return;
 
-    if (container.__bindV3Active) return;
-    container.__bindV3Active = true;
+    // 🔁 Estä tuplabindaukset VAIN samalle DOM-instanssille
+if (container.dataset.v3Bound === '1') return;
+container.dataset.v3Bound = '1';
+
 
     const numFields = new Set(['measuredP', 'pos', 'kWorking', 'flow', 'target']);
 
@@ -11797,179 +11920,410 @@ function bindMeasurementListV3(container) {
         return { duct: null, v: null };
     };
 
-    const ensureOneDraftRowAtEnd = () => {
-        const tbody = container.querySelector('tbody');
-        if (!tbody) return;
+    // ✅ Draft pidetään DATASSA
+  const ensureSingleDraftPerDuct = () => {
+    const { ducts } = getCtx();
+    if (!Array.isArray(ducts)) return;
 
-        const drafts = tbody.querySelectorAll('tr.draft-row');
-        drafts.forEach((d, i) => { if (i !== drafts.length - 1) d.remove(); });
+    ducts.forEach(duct => {
+        if (!duct) return;
 
-        if (!tbody.querySelector('tr.draft-row')) {
-            const tr = document.createElement('tr');
-            tr.className = 'draft-row';
-            tr.innerHTML = `
-                <td><input data-f="room"></td>
-                <td><input data-f="type"></td>
-                <td><input data-f="measuredP" type="number"></td>
-                <td><input data-f="pos" type="number"></td>
-                <td><input data-f="kWorking" type="number" step="0.01"></td>
-                <td><input data-f="flow" type="number" step="0.1"></td>
-                <td><input data-f="target" type="number" step="0.1"></td>
-                <td class="relative">-</td>
-                <td></td>
-            `;
-            tbody.appendChild(tr);
-        }
-    };
+        // poista nullit ja vanhat draftit
+        duct.valves = (duct.valves || []).filter(v => v && !v.__isDraft);
 
-    const updateRowComputedUI = (tr, v) => {
-        try {
-            if (typeof resolveValveFlow === 'function') {
-                resolveValveFlow(v);
-            }
-
-            const eff = typeof getValveFlowEffective === 'function'
-                ? getValveFlowEffective(v)
-                : v.flow;
-
-            if (!v.__manualFlow) {
-                const fInp = tr.querySelector('input[data-f="flow"]');
-                if (fInp && Number.isFinite(eff)) {
-                    fInp.value = eff.toFixed(1);
-                }
-            }
-
-            const pct = typeof calcPercent === 'function'
-                ? calcPercent(eff, v.target)
-                : null;
-
-            const pctCell = tr.querySelector('.relative');
-            if (pctCell) {
-                pctCell.textContent = Number.isFinite(pct) ? Math.round(pct) + ' %' : '-';
-            }
-        } catch {}
-    };
-
-    const bindSimpleValveAutocomplete = (input) => {
-    if (input.__autoBound) return;
-    input.__autoBound = true;
-
-    let box;
-
-    input.addEventListener('input', () => {
-        const q = input.value.toLowerCase();
-        if (!q) {
-            if (box) box.remove();
-            return;
-        }
-
-        const matches = (window.valveGroups || [])
-            .filter(v => v.toLowerCase().includes(q))
-            .slice(0, 6);
-
-        if (box) box.remove();
-        if (!matches.length) return;
-
-        box = document.createElement('div');
-        box.className = 'simple-autocomplete';
-        box.style.position = 'absolute';
-        box.style.background = '#fff';
-        box.style.border = '1px solid #ccc';
-        box.style.zIndex = 9999;
-
-        matches.forEach(name => {
-            const item = document.createElement('div');
-            item.textContent = name;
-            item.style.padding = '6px';
-            item.style.cursor = 'pointer';
-            item.onclick = () => {
-                input.value = name;
-                input.dispatchEvent(new Event('input', { bubbles: true }));
-                box.remove();
-            };
-            box.appendChild(item);
+        // lisää yksi tyhjä draft
+        duct.valves.push({
+            id: 'draft_' + duct.id + '_' + Date.now(),
+            __isDraft: true,
+            room: '',
+            type: '',
+            pos: '',
+            kWorking: '',
+            measuredP: '',
+            flow: '',
+            target: ''
         });
-
-        document.body.appendChild(box);
-        const r = input.getBoundingClientRect();
-        box.style.left = r.left + 'px';
-        box.style.top = (r.bottom + 2) + 'px';
-        box.style.width = r.width + 'px';
     });
 };
 
 
-    container.addEventListener('input', (e) => {
-        const inp = e.target;
-        if (!(inp instanceof HTMLInputElement)) return;
+const rerenderMeasurementList = () => {
+    renderDetailsList?.();
+};
+
+    // ✅ Päätelaite-ehdotukset: valveGroups (ei p.kLibrary)
+    const buildKLibraryTypeList = () => {
+  const lib = window.userKLibraryV2;
+  const entries = Array.isArray(lib?.entries) ? lib.entries : [];
+
+  return Array.from(new Set(
+    entries
+      .map(e => e.model)
+      .filter(Boolean)
+  )).sort((a, b) => a.localeCompare(b, 'fi'));
+};
+
+
+   const attachTypeAutocompleteIfNeeded = (input, onPick) => {
+    if (!input || input.__v3AutoAttached) return;
+    input.__v3AutoAttached = true;
+
+    if (typeof attachValveAutocomplete !== 'function') return;
+
+    attachValveAutocomplete(
+        input,
+        (pickedType) => {
+            onPick(pickedType);
+        },
+        {
+            search: (q) => {
+                const qq = String(q || '').trim().toLowerCase();
+                if (!qq) return [];
+
+                // 🔑 AINOA TOTUUS: userKLibraryV2
+                const lib = window.userKLibraryV2;
+                const entries = Array.isArray(lib?.entries) ? lib.entries : [];
+
+                return Array.from(
+                    new Set(
+                        entries
+                            .map(e => e.model)
+                            .filter(Boolean)
+                    )
+                )
+                .filter(name => name.toLowerCase().includes(qq))
+                .slice(0, 12)
+                .map(name => ({ type: name }));
+            }
+        }
+    );
+};
+const attachPosAutocompleteIfNeeded = (input, v, onPick) => {
+    if (!input || input.__v3PosAutoAttached) return;
+    input.__v3PosAutoAttached = true;
+
+    if (typeof attachValveAutocomplete !== 'function') return;
+
+    attachValveAutocomplete(
+        input,
+        (pickedItem) => {
+            // pickedItem sisältää pos + k
+            onPick(pickedItem);
+        },
+        {
+            returnItem: true, // 🔑 tärkeä
+            search: (q) => {
+                if (!v?.type) return [];
+
+                const qq = String(q ?? '').trim();
+
+                const lib = window.userKLibraryV2;
+                const entries = Array.isArray(lib?.entries) ? lib.entries : [];
+
+                return entries
+                    .filter(e =>
+                        String(e.model) === String(v.type) &&
+                        Number.isFinite(Number(e.pos)) &&
+                        Number.isFinite(Number(e.k))
+                    )
+                    .map(e => {
+                        const pos = Number(e.pos);
+                        const k = Number(e.k);
+                        return {
+                            label: `${pos} (K ${k.toFixed(2)})`,
+                            value: String(pos), // 🔑 inputiin menevä arvo
+                            pos,
+                            k
+                        };
+                    })
+                    .filter(item =>
+                        qq === '' || String(item.pos).startsWith(qq)
+                    )
+                    .sort((a, b) => a.pos - b.pos)
+                    .slice(0, 12);
+            }
+        }
+    );
+};
+
+
+
+window.updateRowComputedUI = (tr, v) => {
+    try {
+        // 0️⃣ Varmista flowCalc ennen kaikkea
+        if (typeof updateValveFlowCalcIfPossible === 'function') {
+            updateValveFlowCalcIfPossible(v);
+        }
+
+        // 1️⃣ Resolve K automaattisesti (jos ei käsin syötetty)
+        if (typeof resolveWorkingKForValve === 'function') {
+            const k = resolveWorkingKForValve(v);
+
+            if (Number.isFinite(k) && !v.__manualK) {
+                v.kWorking = k;
+
+                const kInp = tr.querySelector('input[data-f="kWorking"]');
+                if (kInp) {
+                    kInp.value = String(k);
+                }
+            }
+        }
+
+        // 2️⃣ Laske virtaus (käyttää flowCalc-arvoa)
+        if (typeof resolveValveFlow === 'function') {
+            resolveValveFlow(v);
+        }
+
+        // 3️⃣ Siirrä laskettu virtaus näkyvään kenttään
+        if (!v.__manualFlow && Number.isFinite(v.flowCalc)) {
+            v.flow = v.flowCalc;
+        }
+
+        // 4️⃣ Hae "effective flow"
+        const eff = (typeof getValveFlowEffective === 'function')
+            ? getValveFlowEffective(v)
+            : v.flow;
+
+        // 5️⃣ Päivitä l/s UI
+        if (!v.__manualFlow) {
+            const fInp = tr.querySelector('input[data-f="flow"]');
+            if (fInp && Number.isFinite(eff)) {
+                fInp.value = Number(eff).toFixed(1);
+            }
+        }
+
+        // 6️⃣ Päivitä %
+        const pct = (typeof calcPercent === 'function')
+            ? calcPercent(eff, v.target)
+            : null;
+
+        const pctCell = tr.querySelector('.relative');
+        if (pctCell) {
+            pctCell.textContent = Number.isFinite(pct)
+                ? Math.round(pct) + ' %'
+                : '-';
+        }
+
+    } catch (err) {
+        console.warn('updateRowComputedUI error', err);
+    }
+};
+
+
+
+
+
+
+    // ennen eventtejä
+ensureSingleDraftPerDuct();
+// ✅ autocomplete type + avaus (pos)
+container.addEventListener('focusin', (e) => {
+    const inp = e.target;
+    if (!(inp instanceof HTMLInputElement)) return;
+
+    const field = inp.dataset.f;
+    if (!field) return;
+
+    const tr = inp.closest('tr');
+    if (!tr) return;
+
+    // 🔑 HAE VENTTIILI TÄSSÄ – EI KOSKAAN MYÖHEMMIN
+    const found = findValveForRow(tr);
+    const v = found?.v;
+    if (!v) return;
+
+    /* ================================
+       1) PÄÄTELAITE (type)
+    ================================= */
+    if (field === 'type') {
+        attachTypeAutocompleteIfNeeded(inp, (pickedType) => {
+
+            if (v.__isDraft) {
+                v.__isDraft = false;
+                tr.classList.remove('draft-row');
+                ensureSingleDraftPerDuct();
+            }
+
+            v.type = pickedType;
+            inp.value = pickedType;
+            inp.dataset.raw = pickedType;
+
+            updateRowComputedUI(tr, v);
+            saveData?.();
+        });
+        return;
+    }
+
+    /* ================================
+       2) AVAUS (pos)
+       🔑 EI FOKUSHAKUA
+    ================================= */
+    if (field === 'pos') {
+        attachPosAutocompleteIfNeeded(inp, v, (picked) => {
+            if (!picked || !Number.isFinite(picked.pos)) return;
+
+            // 🔑 aseta arvot SUORAAN
+            v.pos = Number(picked.pos);
+            inp.value = String(v.pos);
+
+            if (Number.isFinite(picked.k)) {
+                v.kWorking = Number(picked.k);
+                v.__manualK = false;
+
+                const kInp = tr.querySelector('input[data-f="kWorking"]');
+                if (kInp) kInp.value = String(v.kWorking);
+            }
+
+            updateRowComputedUI(tr, v);
+            saveData?.();
+        });
+
+        // 🔑 pakota lista auki heti
+        requestAnimationFrame(() => {
+            inp.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+
+        return;
+    }
+});
+
+
+    // ✅ input: päivitä data
+   container.addEventListener('input', (e) => {
+    const inp = e.target;
+    if (!(inp instanceof HTMLInputElement)) return;
+
+    // 🔑 TALLENNA KURSORIN SIJAINTI
+    const caretPos = inp.selectionStart;
+
 
         const tr = inp.closest('tr');
         if (!tr) return;
 
         const field = inp.dataset.f;
         if (!field) return;
-// 🔎 Päätelaite-autocomplete (V3, kevyt)
-if (field === 'type') {
-    bindSimpleValveAutocomplete(inp);
+
+        let { duct, v } = findValveForRow(tr);
+
+        // jos draft-rivi, mutta ei löydy datasta → varmista draft
+        if (!v && tr.classList.contains('draft-row')) {
+ensureSingleDraftPerDuct();
+    rerenderMeasurementList();
+    return;
 }
 
-        // ⭐ DRAFT → LIVE HETI
-        if (tr.classList.contains('draft-row')) {
-            const { ducts } = getCtx();
-            const duct = ducts?.[0];
-            if (!duct) return;
-
-            const v = {
-                id: crypto.randomUUID(),
-                room: '',
-                type: '',
-                measuredP: '',
-                pos: '',
-                kWorking: '',
-                flow: '',
-                target: '',
-                __manualFlow: false
-            };
-
-            duct.valves = duct.valves || [];
-            duct.valves.push(v);
-
-            tr.classList.remove('draft-row');
-            tr.dataset.id = v.id;
-
-            ensureOneDraftRowAtEnd();
-        }
-
-        const { duct, v } = findValveForRow(tr);
         if (!v) return;
 
-        if (numFields.has(field)) {
-            v[field] = parseNum(inp.value);
-        } else {
-            v[field] = inp.value;
-        }
+       // 🔑 Draft-promootio myös MANUAALISESTA syötöstä
+if (v.__isDraft) {
+    v.__isDraft = false;
+        v.__wasDraftPromoted = true; // 🔑 MERKKI
+    tr.classList.remove('draft-row');
 
-        if (field === 'flow') {
-            v.__manualFlow = inp.value !== '';
-        }
+ensureSingleDraftPerDuct();
+}
 
-        // 🔁 AVAUS → K automaattisesti
-        if (field === 'pos' && v.type && typeof resolveWorkingKForValve === 'function') {
-            const k = resolveWorkingKForValve(v);
-            if (Number.isFinite(k)) {
-                v.kWorking = k;
-                const kInp = tr.querySelector('input[data-f="kWorking"]');
-                if (kInp) kInp.value = k;
-            }
-        }
 
-        updateRowComputedUI(tr, v);
-        try { recomputeAfterChange?.(duct); } catch {}
+
+      if (numFields.has(field)) {
+    const n = parseNum(inp.value);
+    v[field] = n;
+
+    // 🔒 Manuaalilukot
+   if (field === 'flow') {
+    // manuaalinen vain jos käyttäjä oikeasti kirjoitti jotain
+    v.__manualFlow = (inp.value !== '');
+}
+
+    if (field === 'kWorking') {
+        v.__manualK = (n !== '' && n != null);
+    }
+
+    // 🔑 MANUAALINEN AVAUS → hae K automaattisesti jos löytyy
+    if (field === 'pos' && Number.isFinite(n) && v.type && !v.__manualK) {
+        const lib = window.userKLibraryV2;
+        const entries = Array.isArray(lib?.entries) ? lib.entries : [];
+
+        const match = entries.find(e =>
+            String(e.model) === String(v.type) &&
+            Number(e.pos) === n &&
+            Number.isFinite(Number(e.k))
+        );
+
+        if (match) {
+            v.kWorking = Number(match.k);
+
+            const kInp = tr.querySelector('input[data-f="kWorking"]');
+            if (kInp) kInp.value = v.kWorking;
+        }
+    }
+
+} else {
+    if (field === 'type') {
+        v.type = inp.dataset.raw || inp.value;
+    } else {
+        v[field] = inp.value;
+    }
+}
+
+updateRowComputedUI(tr, v);
+// 🔁 Viivästetty render, jotta kirjoitus ei katkea
+
+if (v.__wasDraftPromoted) {
+    const keepId = v.id;
+    const keepField = field;
+
+    requestAnimationFrame(() => {
+        rerenderMeasurementList();
+
+        requestAnimationFrame(() => {
+            const row = container.querySelector(
+                `tr[data-id="${CSS.escape(String(keepId))}"]`
+            );
+            const input = row?.querySelector(
+    `input[data-f="${CSS.escape(String(keepField))}"]`
+);
+
+if (input) {
+    input.focus();
+
+    // 🔑 PALAUTA CARET OIKEAAN KOHTAAN
+    const pos = Math.min(caretPos + 1, input.value.length);
+    input.setSelectionRange(pos, pos);
+}
+
+        });
+    });
+
+    delete v.__wasDraftPromoted;
+}
+
         saveData?.();
     });
 
-    ensureOneDraftRowAtEnd();
+    // ✅ napit: nuoli ylös/alas + delete (poistaa kaikkialta deleteValveById:llä)
+    container.addEventListener('click', (e) => {
+        const btn = e.target.closest('button[data-act]');
+        if (!btn) return;
+
+        const tr = btn.closest('tr[data-id]');
+        if (!tr) return;
+
+        const act = btn.dataset.act;
+        const valveId = tr.dataset.id;
+
+        if (act === 'up' && typeof window.moveValveUp === 'function') {
+            window.moveValveUp(valveId);
+        }
+        if (act === 'down' && typeof window.moveValveDown === 'function') {
+            window.moveValveDown(valveId);
+        }
+        if (act === 'delete' && typeof window.deleteValveById === 'function') {
+            window.deleteValveById(valveId);
+        }
+    });
 }
+
 
 
 
