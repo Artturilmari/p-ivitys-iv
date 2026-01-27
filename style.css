@@ -121,11 +121,21 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
     animation: fadeIn 0.2s;
     position: relative;
     z-index: 1;
+
+    /* 🔑 TÄRKEÄT LISÄYKSET */
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    overflow-x: hidden; /* estää koko appin sivurullauksen */
 }
 
 
 
-.view.active { display: block; }
+.view.active {
+  display: block;
+  height: 100%;
+  min-height: 100vh;
+}
 
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
@@ -181,7 +191,13 @@ label { font-weight: 600; font-size: 13px; color: #555; }
 
 
 
-#view-visual { overflow-x: auto; overflow-y: hidden; min-height: 85vh; background: #fdfdfd; background-size: cover; background-position: center; background-repeat: no-repeat; }
+#view-visual {
+  height: 100%;
+  min-height: 85vh;
+  overflow: hidden;
+  display: block;
+}
+
 
 .schematic-container { position: relative; min-width: 1000px; min-height: 800px; padding: 40px 20px; display: flex; }
 
@@ -377,10 +393,9 @@ table.report th { background: #f0f0f0; }
 .duct-card .valves{display:flex;flex-wrap:wrap;gap:6px}
 
 /* Responsive: stack towers on narrow screens */
-@media (max-width: 900px) {
         .vis-wrap{flex-wrap:wrap}
         .vis-tower{min-width:100%;}
-}
+
 
 /* Utility */
 .badge{display:inline-block;padding:2px 6px;border-radius:10px;background:#eee;border:1px solid #ccc;font-size:12px}
@@ -390,16 +405,28 @@ table.report th { background: #f0f0f0; }
 /* --- KERROSTALO-NÄKYMÄN TYYLIT (FINAL) --- */
 /* Rullattava alue (valinnainen kääre jos käytössä) */
 #visScrollArea {
-    overflow: hidden;        /* ❗ EI auto */
+    overflow: hidden;
     height: 80vh;
     background: #eef;
     position: relative;
 
-    /* Pan hoidetaan JS:llä, ei selaimella */
+    /* 🔑 EHDOTTOMAN TÄRKEÄ */
     touch-action: none;
 }
+
+#mapWorld {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  will-change: transform;
+}
+
 /* Pääalue: Tornit vierekkäin */
-#visContent{transform-origin:0 0;transition:transform 0.2s ease;padding:16px;display:flex;flex-direction:row;align-items:flex-start;gap:24px;min-width:max-content}
+
 .vis-zoombar{position:fixed;right:16px;bottom:90px;display:flex;flex-direction:column;gap:8px;z-index:3000}
 .vis-zoombtn{width:36px;height:36px;border-radius:8px;border:1px solid #bbb;background:#fff;cursor:pointer;font-weight:700}
 /* Yksi torni (esim. A-rappu) */
@@ -645,16 +672,21 @@ table.report th { background: #f0f0f0; }
 }
 
     /* VENTTIILIKORTTI */
-    .valve-card {
-        background: #fff;
-        border-radius: 8px;
-        padding: 15px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-        position: relative;
-        border: 1px solid #eee;
-        border-left-width: 5px; /* Värikoodi tulee tähän */
-    }
-    
+    .valve-cards-layer {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+  padding: 16px;
+}
+
+.valve-card {
+  background: #fff;
+  border-radius: 10px;
+  padding: 12px;
+  border: 1px solid #ddd;
+}
+
+
     /* Värikoodit */
     .valve-card.index { border-left-color: #2196F3; } /* Sininen - Indeksi */
     .valve-card.error { border-left-color: #dc3545; } /* Punainen - Iso virhe */
@@ -1273,7 +1305,6 @@ button:disabled {
    📱 TOIMINTONAPIT MOBIILISSA
    =============================== */
 
-@media (max-width: 520px) {
 
     /* Toiminnot-sarake allekkain */
     .k-valve-modal td:last-child {
@@ -1286,7 +1317,7 @@ button:disabled {
     .k-valve-modal .btn-xs {
         width: 100%;
     }
-}
+
 
 
 /* ===============================
@@ -1449,16 +1480,12 @@ button:disabled {
    MOBIILITUKI (vaakaskrolli)
    ===================== */
 
-@media (max-width: 900px) {
-    .vis-trunk {
-        overflow-x: auto;
-    }
 
     .vis-valves-wrap {
         min-width: max-content;
         padding-bottom: 12px;
     }
-}
+
 /* =====================================================
    VENTTIILIKORTIT – KOKO, KONTRASTI, KLIKATTAVUUS
    ===================================================== */
@@ -1626,9 +1653,6 @@ button:disabled {
   padding:12px;
 }
 
-@media (max-width: 900px){
-  .map-wow{ grid-template-columns: 1fr; }
-}
 
 .map-machine{
   display:flex;
@@ -1770,14 +1794,6 @@ button:disabled {
   padding:10px 10px 12px;
   position:relative;
   overflow:visible; /* 🔑 indeksilippu saa näkyä */
-}
-
-@media (max-width: 900px){
-  .map-valve{
-    min-width: 155px;
-    max-width: 180px;
-    padding:8px 8px 10px;
-  }
 }
 
 .map-valve.clickable{ cursor:pointer; }
@@ -2098,10 +2114,6 @@ button:disabled {
    MOBIILI
    =============================== */
 
-@media (max-width: 900px) {
-  .map-wow {
-    flex-direction: column;
-  }
 
   .map-machine {
     width: 170px;
@@ -2115,7 +2127,7 @@ button:disabled {
   .map-pipe {
     padding-left: 18px;
   }
-}
+
 /* Indeksisuhde-badge kartassa */
 .map-ratio {
     font-weight: 800;
@@ -2439,162 +2451,7 @@ button:disabled {
     color: #777;
     background: #f5f5f5;
 }
-/* =====================================================
-   MITTALISTA V2 – EXCEL-TYYLINEN ETUSIVU
-   ===================================================== */
 
-.measurelist-v2 {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-}
-
-/* Rungon otsikko */
-.duct-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 6px 8px;
-    font-size: 12px;
-    font-weight: 700;
-    background: #f3f5f7;
-    border: 1px solid #ddd;
-    border-radius: 6px;
-}
-
-.duct-header .duct-type {
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 0.08em;
-    color: #555;
-}
-
-.duct-status {
-    font-size: 11px;
-    font-weight: 800;
-    padding: 2px 6px;
-    border-radius: 10px;
-}
-
-/* Taulukko */
-.measure-table {
-    width: 100%;
-    border-collapse: collapse;
-    table-layout: fixed;
-    font-size: 12px;
-    background: #fff;
-}
-
-.measure-table th {
-    background: #fafafa;
-    border-bottom: 1px solid #ccc;
-    padding: 4px 2px;
-    font-size: 11px;
-    font-weight: 800;
-    text-transform: uppercase;
-    color: #555;
-}
-
-.measure-table td {
-    border-bottom: 1px solid #eee;
-    padding: 2px 2px;
-    text-align: center;
-    vertical-align: middle;
-}
-
-/* Rivikorkeus tiiviiksi */
-.measure-table tr {
-    height: 26px;
-}
-
-
-
-
-.measure-table input:focus {
-    border-color: #2196F3;
-    background: #fff;
-    outline: none;
-}
-
-/* K-arvo korostettuna */
-.measure-table td .k-input,
-.measure-table td input[data-k="true"] {
-    font-weight: 800;
-    width: 70px;
-}
-
-/* Päätelaite */
-.measure-table .valve-type,
-.measure-table td input[data-f="type"] {
-    font-weight: 800;
-    text-transform: uppercase;
-}
-
-/* Toiminnot */
-.measure-table .row-actions {
-    display: flex;
-    gap: 4px;
-    justify-content: center;
-    align-items: center;
-}
-
-/* Skrollaus pitkälle listalle (EI automaattista hyppimistä) */
-#measurementList {
-    height: calc(100vh - 180px);   /* vie lähes koko näytön */
-    min-height: 600px;
-    overflow-y: auto;
-    overflow-anchor: none;         /* estää scroll-hypyt */
-}
-
-
-/* Venttiilirivi neutraaliksi */
-.measure-table tr {
-    background:#fff;
-}
-
-.measure-table tr:hover {
-    background:#f6f6f6;
-}
-
-/* Päätelaite EI hälytysväri */
-.measure-table .valve-type,
-.measure-table td input[data-f="type"] {
-    color:#222;
-    font-weight:600;
-}
-
-/* % ilman väriä */
-.measure-table .pct-cell {
-    color:#222;
-    font-weight:600;
-}
-.status-dot {
-    width:10px;
-    height:10px;
-    border-radius:50%;
-    display:inline-block;
-    margin:auto;
-}
-
-.status-ok { background:#2ecc71; }
-.status-warn { background:#f1c40f; }
-.status-bad { background:#e74c3c; }
-/* Huone tärkein */
-.measure-table td.huone input {
-    font-weight:600;
-    font-size:13px;
-}
-
-/* Mitattu / Suunn keskitaso */
-.measure-table td.flow input {
-    font-weight:500;
-}
-
-/* Säätöarvot kevyemmät */
-.measure-table td.meta input {
-    color:#555;
-    font-size:12px;
-}
 /* ================================
    MITTALISTAN TILAPALLO
    ================================ */
@@ -2619,219 +2476,13 @@ button:disabled {
     background-color: #e74c3c; /* punainen */
 }
 
-/* Ensimmäinen sarake kapeaksi */
-.measure-table th.status-col,
-.measure-table td.status-col {
-    width: 22px;
-    padding: 0;
-    text-align: center;
-}
-/* Mittalistan klikattavuus */
-.measure-table input,
-.measure-table td {
-    cursor: pointer;
-}
-
-.measure-table input:focus {
-    cursor: text;
-}
-/* Rivin tausta klikattava */
-.measure-table tr.valve-row {
-    cursor: pointer;
-}
-
-/* Inputissa normaali tekstikursori */
-.measure-table input {
-    cursor: text;
-}
-
-.measure-table button {
-    cursor: pointer;
-}
 
 
-.measurement-table th,
-.measurement-table td {
-    border: 1px solid #ddd;
-    padding: 6px;
-    font-size: 13px;
-}
-
-.measurement-table th {
-    background: #f0f0f0;
-    font-weight: 600;
-}
-
-.measurement-table input {
-    width: 100%;
-    border: none;
-    padding: 4px;
-    font-size: 13px;
-}
-
-.measurement-table tr.empty-row {
-    background: #fafafa;
-}
-
-.measurement-table tr.filled-row {
-    background: #ffffff;
-}
-.measure-input-table {
-  width:100%;
-  border-collapse:collapse;
-  background:#fff;
-  margin-bottom:16px;
-}
-.measure-input-table th,
-.measure-input-table td {
-  border:1px solid #ddd;
-  padding:6px;
-  font-size:13px;
-}
-.measure-input-table th { background:#f0f0f0; }
-.measure-input-table input {
-  width:100%;
-  border:none;
-  padding:4px;
-  font-size:13px;
-}
-.measure-input-table tr.empty-row { background:#fafafa; }
-.measure-input-table tr.filled-row { background:#fff; }
-.measure-input-block { margin-bottom:16px; }
-.draft-row {
-    background:#fafafa;
-}
 .draft-row input {
     color:#999;
 }
 .draft-row input:focus {
     color:#000;
-}
-/* ================================
-   COMPACT EXCEL-STYLE MITTALISTA
-   ================================ */
-
-.measure-table {
-    font-size: 12px;
-}
-
-.measure-table th {
-    padding: 4px 4px;
-    font-size: 11px;
-}
-
-.measure-table td {
-    padding: 2px 4px;
-}
-
-.measure-table input {
-    padding: 4px 6px;
-    font-size: 12px;
-}
-
-.valve-row {
-    height: 34px;
-}
-
-.measurelist-v2 {
-    max-height: 420px;        /* 👈 EI valtaa koko sivua */
-    overflow-y: auto;
-    border: 1px solid #ddd;
-    border-radius: 6px;
-}
-
-/* ================================
-   STICKY HEADER
-   ================================ */
-.measure-table thead th {
-    position: sticky;
-    top: 0;
-    background: #f9f9f9;
-    z-index: 5;
-}
-
-/* ================================
-   STICKY RUNKO
-   ================================ */
-.duct-header {
-    position: sticky;
-    top: 32px; /* otsikkorivin korkeus */
-    z-index: 4;
-    background: #fff;
-}
-.k-cell input {
-    padding-right: 22px; /* tilaa 💾-ikonille */
-}
-
-.k-save-hint:hover {
-    color: #0d47a1;
-}
-.k-cell {
-    position: relative;
-}
-
-.k-cell input {
-    padding-right: 28px; /* lisää tilaa ikonille */
-}
-
-.k-save-hint {
-    position: absolute;
-    right: 6px;
-    top: 50%;
-    transform: translateY(-50%);
-    font-size: 15px;
-    cursor: pointer;
-    opacity: 0.7;
-}
-
-.k-save-hint:hover {
-    opacity: 1;
-    color: #0d47a1;
-}
-.measure-table td.k-cell {
-  position: relative;
-}
-
-.measure-table td.k-cell input {
-  padding-right: 30px; /* tilaa 💾-ikonille */
-}
-
-.k-save-hint {
-  position: absolute;
-  right: 8px;
-  top: 50%;
-  transform: translateY(-50%);
-  cursor: pointer;
-  font-size: 15px;
-  opacity: 0.85;
-  user-select: none;
-}
-.measure-table td.k-cell { position: relative; }
-
-.k-lock {
-  position: absolute;
-  right: 8px;
-  top: 50%;
-  transform: translateY(-50%);
-  cursor: pointer;
-  font-size: 15px;
-  opacity: 0.85;
-}
-.k-lock:hover { opacity: 1; }
-
-
-#newProjectModal {
-    position: fixed !important;
-    inset: 0 !important;
-    display: none;
-    align-items: center;
-    justify-content: center;
-    background: rgba(0,0,0,0.6);
-    z-index: 99999 !important;
-}
-.modal-box {
-    position: relative;
-    z-index: 100000;
 }
 
 /* 🔒 MODAALIT AINA KLIKATTAVIA */
@@ -3518,17 +3169,6 @@ body.modal-open .view {
     gap: 16px;
     align-items: flex-start;
 }
-#mapViewport {
-    overflow: hidden;
-    width: 100%;
-    height: calc(100vh - 220px); /* desktop */
-    position: relative;
-}
-
-#mapWorld {
-    will-change: transform;
-    transform-origin: 0 0;
-}
 
 .valve-dot {
     width: 12px;
@@ -3598,95 +3238,6 @@ body.modal-open .view {
 .trunk-pipe {
     min-width: max-content;
 }
-/* ─────────────────────────────────────────────
-   📊 V3 MITTALISTA – EXCEL-MÄINEN TAULUKKO
-   ───────────────────────────────────────────── */
-
-/* Listan container: enemmän tilaa, ei hyppyjä */
-#measurementList {
-    max-height: 88vh;
-    overflow-y: auto;
-    overflow-anchor: none; /* estää selaimen scroll-ankkuroinnin */
-}
-
-/* Taulukko */
-.measurement-table {
-    width: 100%;
-    border-collapse: collapse;
-    table-layout: fixed;
-    font-size: 13px;
-    background: #0f1115;
-    color: #e6e6e6;
-}
-
-
-
-
-
-
-/* Numerokentät tiiviimmäksi */
-.measurement-table input[type="number"] {
-    text-align: right;
-}
-
-
-
-/* % / suhde */
-.measurement-table .relative {
-    text-align: right;
-    padding: 0 6px;
-    font-weight: 600;
-    color: #9fd3ff;
-    font-size: 12px;
-}
-
-/* Toiminnot */
-.measurement-table .row-actions {
-    display: flex;
-    gap: 2px;
-    justify-content: center;
-}
-
-.measurement-table .row-actions button {
-    background: transparent;
-    border: none;
-    color: #aaa;
-    cursor: pointer;
-    font-size: 12px;
-    padding: 0 4px;
-}
-
-.measurement-table .row-actions button:hover {
-    color: #fff;
-}
-
-/* Sarakeleveydet (Excel-tyylinen) */
-.measurement-table th:nth-child(1),
-.measurement-table td:nth-child(1) { width: 14%; } /* Huone */
-
-.measurement-table th:nth-child(2),
-.measurement-table td:nth-child(2) { width: 18%; } /* Päätelaite */
-
-.measurement-table th:nth-child(3),
-.measurement-table td:nth-child(3) { width: 7%; }  /* Pa */
-
-.measurement-table th:nth-child(4),
-.measurement-table td:nth-child(4) { width: 8%; }  /* Avaus */
-
-.measurement-table th:nth-child(5),
-.measurement-table td:nth-child(5) { width: 7%; }  /* K */
-
-.measurement-table th:nth-child(6),
-.measurement-table td:nth-child(6) { width: 9%; }  /* L/s */
-
-.measurement-table th:nth-child(7),
-.measurement-table td:nth-child(7) { width: 9%; }  /* Suunn */
-
-.measurement-table th:nth-child(8),
-.measurement-table td:nth-child(8) { width: 6%; }  /* % */
-
-.measurement-table th:nth-child(9),
-.measurement-table td:nth-child(9) { width: 6%; }  /* Nappulat */
 
 /* Autocomplete (V3-yhteensopiva, erottuva) */
 .autocomplete-box {
@@ -3708,177 +3259,294 @@ body.modal-open .view {
 .autocomplete-item:hover {
     background: #2a3355 !important;
 }
-/* ===============================
-   MITTALISTA V3 – EXCEL-TYYLI
-   =============================== */
 
-#measurementList {
-    background: #ffffff;
-    color: #222;
-}
 
-#measurementList table {
-    width: 100%;
-    border-collapse: collapse;
-}
-
-#measurementList th,
-#measurementList td {
-    background: #ffffff;
-    color: #222;
-    border: 1px solid #ddd;
-    padding: 4px 6px;
-    font-size: 13px;
-}
-
-#measurementList tr:hover td {
-    background: #f5f8ff;
-}
-/* V3 mittalista VALEA excel-tyyli */
-.measurement-table{
-    width: 100%;
-    border-collapse: collapse;
-    table-layout: fixed;
-    font-size: 13px;
-    background: #fff;
-    color: #222;
-}
-
-.measurement-table thead th{
-    position: sticky;
-    top: 0;
-    z-index: 5;
-    background: #f3f5f7;
-    color: #222;
-    font-weight: 700;
-    padding: 6px 6px;
-    border-bottom: 1px solid #ddd;
-    text-align: left;
-    white-space: nowrap;
-}
-
-.measurement-table tbody tr:nth-child(even){
-    background: #fafafa;
-}
-
-.measurement-table tbody tr:hover{
-    background: #f5f8ff;
-}
-
-.measurement-table td{
-    padding: 0;
-    border-bottom: 1px solid #eee;
-    vertical-align: middle;
-}
-
-.measurement-table input{
-    width: 100%;
-    height: 26px;
-    box-sizing: border-box;
-    border: none;
-    background: transparent;
-    color: #222;
-    padding: 2px 6px;
-    font-size: 13px;
-    outline: none;
-}
-
-.measurement-table input:focus{
-    background: #fff;
-    box-shadow: inset 0 0 0 2px rgba(33,150,243,0.35);
-}
-
-.measurement-table tr.draft-row{
-    background: #fff;
-}
-.measurement-table tr.draft-row input{
-    color: #888;
-    font-style: italic;
-}
-.group-header {
-  background: #f3f6fa;
-  font-weight: 600;
-}
-
-.group-title {
-  float: left;
-}
-
-.group-status {
-  float: right;
-  font-weight: bold;
-}
-.room-cell {
-  white-space: nowrap;
-}
-
-.index-star {
-  margin-right: 4px;
-  font-size: 13px;
-}
-.adj {
-  margin-left: 4px;
-  font-weight: bold;
-}
-
-.adj.up {
-  color: #c0392b;
-}
-
-.adj.down {
-  color: #2980b9;
-}
-.group-row td {
-    background: #f0f2f4;
-    font-size: 11px;
-    font-weight: 700;
-    padding: 3px 6px;
-    border-top: 1px solid #bbb;
-}
-
-.group-row.supply td { color: #1e8449; }
-.group-row.extract td { color: #922b21; }
-
-.room-cell {
-    white-space: nowrap;
-}
-
-.index-star {
-    margin-right:4px;
-    font-size:13px;
-}
-/* %-sarakkeen peruslook */
-.measurement-table td.relative {
-    font-weight: 700;
-    font-size: 13px;
-    white-space: nowrap;
-}
-
-/* Värisävyt kentälle (hieman tummemmat kuin webissä) */
-.measurement-table td.relative.low {
-    color: #b03a2e; /* punainen */
-}
-.measurement-table td.relative.mid {
-    color: #af601a; /* oranssi */
-}
-.measurement-table td.relative.ok {
-    color: #1e8449; /* vihreä */
-}
-.measurement-table td.relative.high {
-    color: #1f618d; /* sininen */
-}
 .index-star {
     margin-right: 4px;
     font-size: 12px;
     opacity: 0.7;
 }
-.measurement-table td,
-.measurement-table th {
-    padding: 4px 6px;
+
+
+
+
+.mh-left,
+.mh-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+
+.mh-select {
+  height: 32px;
+  padding: 0 12px;
+
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+
+  font-size: 13px;
+  font-weight: 500;
+  color: #374151;
+
+  cursor: pointer;
+}
+
+.mh-select:hover {
+  background: #f3f4f6;
+}
+
+
+.mh-search {
+  height: 32px;
+  width: 220px;
+
+  padding: 0 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+
+  font-size: 13px;
+}
+
+.mh-action {
+  height: 32px;
+  padding: 0 14px;
+
+  border-radius: 8px;
+  border: none;
+
+  background: #2563eb;
+  color: white;
+  font-weight: 600;
+  font-size: 13px;
+
+  cursor: pointer;
+}
+
+
+.mh-action:hover { background: #1d4ed8; }
+
+body {
+  background: #f5f7fa;
+}
+/* =========================================================
+   ✅ MITTALISTA V3 – STABIILI LOPULLINEN
+   ========================================================= */
+
+/* ─────────────────────────────
+   RAKENNE + SCROLL
+   ───────────────────────────── */
+.measurement-shell,
+.measurement-body {
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+.measurement-body {
+  overflow-x: auto;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  background: #fff;
+}
+
+/* ─────────────────────────────
+   TAULUKKO – DESKTOP
+   ───────────────────────────── */
+.measurement-table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: max-content;
+  min-width: 1100px;
+  font-size: 13px;
+}
+
+.measurement-table thead th {
+  height: 34px;
+  padding: 4px 6px;
+  font-weight: 600;
+  background: #f3f5f7;
+  border-bottom: 1px solid #d0d6dc;
+  white-space: nowrap;
+}
+
+.measurement-table td {
+  height: 34px;
+  padding: 4px 6px;
+  border-bottom: 1px solid #eef0f2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .measurement-table input {
-    height: 26px;
-    font-size: 13px;
-    padding: 2px 4px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  font-size: inherit;
+}
+
+/* ─────────────────────────────
+   DESKTOP SARAKKEET (ÄLÄ MUUTA)
+   ───────────────────────────── */
+.measurement-table th:nth-child(1),
+.measurement-table td:nth-child(1) { min-width: 140px; }
+
+.measurement-table th:nth-child(2),
+.measurement-table td:nth-child(2) { min-width: 160px; }
+
+.measurement-table th:nth-child(3),
+.measurement-table td:nth-child(3) { min-width: 50px; text-align: center; }
+
+.measurement-table th:nth-child(4),
+.measurement-table td:nth-child(4) { min-width: 70px; text-align: center; }
+
+.measurement-table th:nth-child(5),
+.measurement-table td:nth-child(5) { min-width: 60px; text-align: center; }
+
+.measurement-table th:nth-child(6),
+.measurement-table td:nth-child(6) { min-width: 70px; text-align: center; }
+
+.measurement-table th:nth-child(7),
+.measurement-table td:nth-child(7) { min-width: 70px; text-align: center; }
+
+.measurement-table th:nth-child(8),
+.measurement-table td:nth-child(8) { min-width: 80px; text-align: center; }
+
+.measurement-table th:nth-child(9),
+.measurement-table td:nth-child(9) { min-width: 60px; text-align: center; }
+
+.measurement-table th:nth-child(10),
+.measurement-table td:nth-child(10) {
+  min-width: 70px;
+  text-align: center;
+}
+
+/* ─────────────────────────────
+   📱 MOBIILI – STABIILI, EI RÄJÄHDÄ
+   ───────────────────────────── */
+@media (max-width: 600px) {
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    overflow-x: hidden;
+  }
+
+  .view,
+  .main,
+  .main-content,
+  .page,
+  .measurement-shell,
+  .measurement-body {
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+    padding: 0;
+  }
+
+  /* 🔑 TÄRKEIN KORJAUS */
+  .measurement-table {
+    width: 100%;              /* EI max-content */
+    min-width: 0;
+    table-layout: fixed;      /* pakota mahtumaan */
+    font-size: 11px;
+  }
+
+  .measurement-table th,
+  .measurement-table td {
+    padding: 2px 3px;
+    line-height: 1.25;
+    box-sizing: border-box;
+  }
+
+  /* Sarakkeet (samat kuin aiemmin) */
+  .measurement-table th:nth-child(1),
+  .measurement-table td:nth-child(1) { width: 11ch; }
+
+  .measurement-table th:nth-child(2),
+  .measurement-table td:nth-child(2) { width: 11ch; }
+
+  .measurement-table th:nth-child(3),
+  .measurement-table td:nth-child(3) { width: 6ch; }
+
+  .measurement-table th:nth-child(4),
+  .measurement-table td:nth-child(4) { width: 8ch; }
+
+  .measurement-table th:nth-child(5),
+  .measurement-table td:nth-child(5) { width: 6.6ch; }
+
+  .measurement-table th:nth-child(6),
+  .measurement-table td:nth-child(6) { width: 8.2ch; }
+
+  .measurement-table th:nth-child(7),
+  .measurement-table td:nth-child(7) { width: 9ch; }
+
+  .measurement-table th:nth-child(8),
+  .measurement-table td:nth-child(8) { width: 9ch; }
+
+  .measurement-table th:nth-child(9),
+  .measurement-table td:nth-child(9) { width: 11ch; }
+
+  .measurement-table th:nth-child(10),
+  .measurement-table td:nth-child(10) { width: 7ch; }
+
+  /* Piilota tähti mobiilissa */
+  .index-star {
+    display: none;
+  }
+}
+
+/* ─────────────────────────────
+   🖥️ INDEKSIRIVIN KOROSTUS
+   ───────────────────────────── */
+.measurement-table tr.is-index-row {
+  background-color: #fff4cc;
+}
+
+.measurement-table tr.is-index-row td:first-child {
+  box-shadow: inset 4px 0 0 #f1c40f;
+}
+
+.measurement-table tr.is-index-row td {
+  font-weight: 600;
+}
+
+/* Toimintonapit */
+.row-actions {
+  display: flex;
+  gap: 4px;
+  justify-content: center;
+}
+
+.row-actions button {
+  padding: 2px 4px;
+  font-size: 12px;
+}
+/* 🔒 Kartan näkyvyys – PAKOLLINEN */
+#visContent {
+  height: 100%;
+  min-height: 85vh;
+  display: block;
+}
+
+
+#mapViewport {
+  overflow: hidden;
+  width: 100%;
+  height: calc(100vh - 220px);  /* ✅ ei voi olla 0 */
+  min-height: 420px;            /* ✅ varmistus */
+  position: relative;
+  touch-action: none;
+}
+
+
+#mapWorld {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
 }

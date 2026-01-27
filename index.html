@@ -166,9 +166,6 @@
         <!-- 🔧 A-MALLIN KONEPALKKI (PAKOLLINEN) -->
         <div id="detailsMachineBar" style="margin-top:15px;"></div>
 
-        <!-- 📋 MITTALISTA (A-MALLI) -->
-        <h4 style="margin-top:20px;">Mittalista</h4>
-        <div id="measurementList"></div>
 
         <div style="margin-top:8px;">
             <button class="btn btn-primary" onclick="showAddValve('supply')">
@@ -214,61 +211,84 @@
     </div>
 </div>
 
-    <!-- VISUAL/SCHEMATIC VIEW -->
-    <div class="view" id="view-visual">
-        <div style="background:#333; padding:10px; display:flex; gap:10px; position:sticky; top:0; z-index:100;">
-            <div id="visModeButtons" style="display:flex; gap:5px; flex:1;">
-              
+<!-- VISUAL / SCHEMATIC VIEW -->
+<div class="view" id="view-visual">
 
-         <button class="btn btn-secondary" style="margin:0; padding:5px 10px; font-size:12px;" onclick="setVisualMode('vertical')">🏢 Pysty</button>
-                <button class="btn btn-secondary" style="margin:0; padding:5px 10px; font-size:12px;" onclick="setVisualMode('horizontal')">🏠 Vaaka</button>
-            </div>
-            <div id="mapViewSelector"
-     style="
-        display:flex;
-        gap:6px;
-        align-items:center;
-     ">
-</div>
+  <!-- YLÄOHJAUS -->
+  <div style="
+      background:#333;
+      padding:10px;
+      display:flex;
+      gap:10px;
+      position:sticky;
+      top:0;
+      z-index:100;
+      align-items:center;
+  ">
 
-            <div style="display:flex; gap:5px;">
-    <button class="btn btn-secondary"
-            style="margin:0; padding:5px 10px;"
-            onclick="zoomVisual(0.1)">🔍+</button>
+    <!-- TASOT -->
+    <div style="display:flex; gap:6px;">
+      <button class="btn btn-secondary"
+              onclick="goToLevel('machines')">Koneet</button>
 
-    <button class="btn btn-secondary"
-            style="margin:0; padding:5px 10px;"
-            onclick="zoomVisual(-0.1)">🔍-</button>
+      <button class="btn btn-secondary"
+              onclick="goToLevel('ducts')">Rungot</button>
 
-    <button class="btn btn-secondary"
-            style="margin:0; padding:5px 10px;"
-            onclick="fitMapToScreen()"
-            title="Sovita kartta näkymään">
-        ⛶
-    </button>
-</div>
-
-        </div>
-
-        <div id="relativeAdjustPanel" style="display: none; padding: 0 15px;"></div>
-        <div id="visRoofBar" style="position:sticky; top:46px; z-index:90; background:#fafafa; border-bottom:1px solid #ddd; padding:8px 12px; display:flex; gap:12px; align-items:center;"></div>
-
-        <div id="visScrollArea" style="overflow:auto; height:80vh; background:#eef; position:relative;">
-            <div id="visContent"
-     style="transform-origin: 0 0; transition: transform 0.1s ease;
-            padding:50px; min-height:1000px; min-width:1000px;">
-
-    <!-- VIEWPORT (näkyvä alue) -->
-    <div id="mapViewport"
-         style="position:relative; width:100%; height:100%; overflow:hidden; touch-action:none;">
-
-        <!-- WORLD (zoom & pan liikuttaa tätä) -->
-        <div id="mapWorld"
-             style="position:absolute; left:0; top:0; transform-origin:0 0;">
-            <!-- tänne piirretään jatkossa koneet / rungot / venttiilit -->
-        </div>
-
+      <button class="btn btn-secondary"
+              onclick="goToLevel('valves')">Venttiilit</button>
     </div>
+
+    <!-- RUNKOSUODATIN -->
+    <div id="mapViewSelector"
+         style="display:flex; gap:6px; align-items:center; flex:1;">
+    </div>
+
+    <!-- TASONVAIHTO + ZOOM -->
+    <div style="display:flex; gap:5px;">
+      <button onclick="goNextMapLevel()">+</button>
+      <button onclick="goPrevMapLevel()">−</button>
+
+      <button class="btn btn-secondary"
+              style="padding:5px 10px;"
+              onclick="fitMapToScreen()"
+              title="Sovita kartta näkymään">
+        ⛶
+      </button>
+    </div>
+  </div>
+
+  <!-- YLÄRIVI (Takaisin / kone) -->
+  <div id="visRoofBar"
+       style="
+         position:sticky;
+         top:46px;
+         z-index:90;
+         background:#fafafa;
+         border-bottom:1px solid #ddd;
+         padding:8px 12px;
+         display:flex;
+         gap:12px;
+         align-items:center;
+       ">
+  </div>
+
+  <!-- KARTTA / SISÄLTÖ -->
+  <div id="visScrollArea"
+       style="overflow:auto; height:80vh; background:#eef; position:relative;">
+
+    <div id="visContent"
+         style="
+           transform-origin: 0 0;
+           transition: transform 0.1s ease;
+           padding:50px;
+           min-height:1000px;
+           min-width:1000px;
+         ">
+    </div>
+
+  </div>
+</div>
+
 
 </div>
 

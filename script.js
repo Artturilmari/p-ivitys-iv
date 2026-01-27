@@ -30,6 +30,11 @@ window.mapWorldState = {
     scale: 1
 };
 
+window.visualView = 'map';
+// 'map' = kaavio (koneet / rungot / pallukat)
+// 'cards' = venttiilikortit
+
+window.measurementListEditLock = false;
 
 window.machineZoom = 'all'; 
 // arvot: 'all' | 'duct'
@@ -214,21 +219,23 @@ function ensureMapDom() {
     containerEl.style.display = 'block';
     containerEl.style.padding = '0';
     containerEl.style.minWidth = '0';
-    containerEl.style.height = '100%';
+containerEl.style.height = 'auto';
+
 
     // 2) Luo DOM jos puuttuu
     let viewport = document.getElementById('mapViewport');
     let world = document.getElementById('mapWorld');
 
     if (!viewport || !world) {
-        containerEl.innerHTML = `
-            <div id="mapViewport"
-                 style="position:relative; width:100%; height:80vh; overflow:hidden; touch-action:none;">
-                <div id="mapWorld"
-                     style="position:absolute; left:0; top:0; transform-origin:0 0;">
-                </div>
-            </div>
-        `;
+    containerEl.innerHTML = `
+  <div id="mapViewport"
+       style="position:relative; width:100%; height:80vh; overflow:hidden; touch-action:none;">
+    <div id="mapWorld"
+         style="position:absolute; left:0; top:0; transform-origin:0 0;">
+    </div>
+  </div>
+`;
+
 
         viewport = document.getElementById('mapViewport');
         world = document.getElementById('mapWorld');
@@ -238,98 +245,29 @@ function ensureMapDom() {
         console.error('❌ ensureMapDom: mapViewport/mapWorld ei saatu luotua');
         return null;
     }
+// 3) world state
+if (!window.mapWorldState) {
+    // ✅ Turvallinen oletus: näkyy varmasti
+    window.mapWorldState = { x: 0, y: 0, scale: 1 };
+} else {
+    if (!isFinite(window.mapWorldState.x)) window.mapWorldState.x = 0;
+    if (!isFinite(window.mapWorldState.y)) window.mapWorldState.y = 0;
 
-    // 3) world state
-    if (!window.mapWorldState) {
-        window.mapWorldState = { x: 0, y: 0, scale: 0.7 }; // 0.7 => aloittaa "machines"
-    } else {
-        if (typeof window.mapWorldState.x !== 'number') window.mapWorldState.x = 0;
-        if (typeof window.mapWorldState.y !== 'number') window.mapWorldState.y = 0;
-        if (typeof window.mapWorldState.scale !== 'number') window.mapWorldState.scale = 0.7;
+    // ✅ Älä pakota 0.7 — korjaa vain jos rikki
+    if (!isFinite(window.mapWorldState.scale) || window.mapWorldState.scale <= 0) {
+        window.mapWorldState.scale = 1;
     }
+}
+
+// ✅ Pakota world näkyväksi (GoogleMaps-zoom-jäänteen varalta)
+world.style.display = 'block';
+world.style.visibility = 'visible';
+world.style.opacity = '1';
+
 
     return { viewport, world, containerEl };
 }
-function fitMapToScreen(padding = 60) {
-    const viewport = document.getElementById('mapViewport');
-    const world = document.getElementById('mapWorld');
-    if (!viewport || !world) return;
 
-    const viewportRect = viewport.getBoundingClientRect();
-    const worldRect = world.getBoundingClientRect();
-
-    const contentWidth = worldRect.width;
-    const contentHeight = worldRect.height;
-
-    if (contentWidth === 0 || contentHeight === 0) return;
-
-    const scaleX = (viewportRect.width - padding * 2) / contentWidth;
-    const scaleY = (viewportRect.height - padding * 2) / contentHeight;
-
-    // Valitaan pienempi → kaikki varmasti näkyy
-    let newScale = Math.min(scaleX, scaleY);
-
-    // Rajoitukset (samat kuin zoomissa)
-    newScale = Math.min(3, Math.max(0.3, newScale));
-
-    // Keskitys
-    const offsetX =
-        (viewportRect.width - contentWidth * newScale) / 2;
-    const offsetY =
-        (viewportRect.height - contentHeight * newScale) / 2;
-
-    window.mapWorldState.scale = newScale;
-    window.mapWorldState.x = offsetX;
-    window.mapWorldState.y = offsetY;
-
-    applyMapTransform();
-
-    // Päivitä karttataso zoomin mukaan
-    const newLevel = resolveMapLevelFromZoom(newScale);
-    if (newLevel !== window.mapLevel) {
-        window.mapLevel = newLevel;
-        renderVisualContent();
-    }
-}
-
-function enableMapPan() {
-    const viewport = document.getElementById('mapViewport');
-    if (!viewport) return;
-
-    let dragging = false;
-    let lastX = 0;
-    let lastY = 0;
-
-    viewport.addEventListener('pointerdown', e => {
-        dragging = true;
-        lastX = e.clientX;
-        lastY = e.clientY;
-        viewport.setPointerCapture(e.pointerId);
-    });
-
-    viewport.addEventListener('pointermove', e => {
-        if (!dragging) return;
-
-        const dx = e.clientX - lastX;
-        const dy = e.clientY - lastY;
-
-        window.mapWorldState.x += dx;
-        window.mapWorldState.y += dy;
-
-        lastX = e.clientX;
-        lastY = e.clientY;
-
-        applyMapTransform();
-    });
-
-    viewport.addEventListener('pointerup', () => {
-        dragging = false;
-    });
-
-    viewport.addEventListener('pointerleave', () => {
-        dragging = false;
-    });
-}
 // ─────────────────────────────────
 // ZOOM → KARTTATASO RAJAT (LOD)
 // ─────────────────────────────────
@@ -341,92 +279,6 @@ function resolveMapLevelFromZoom(scale) {
     if (scale >= ZOOM_TO_VALVES) return 'valves';
     if (scale >= ZOOM_TO_DUCTS)  return 'ducts';
     return 'machines';
-}
-
-function enableMapZoom() {
-    const viewport = document.getElementById('mapViewport');
-    if (!viewport) return;
-
-    viewport.addEventListener('wheel', e => {
-        // 🔒 Estä liian tiheä zoom (yksi per frame)
-if (window.__zooming) return;
-window.__zooming = true;
-requestAnimationFrame(() => {
-    window.__zooming = false;
-});
-
-        e.preventDefault();
-
-        if (!window.mapWorldState) return;
-
-        // 🧠 Trackpad-ystävällinen zoom
-        const zoomSpeed = 0.0008; // säädä tarvittaessa
-        const rawDelta = -e.deltaY * zoomSpeed;
-
-        // 🔒 Rajoita yhden tapahtuman vaikutus
-        const delta = Math.max(-0.05, Math.min(0.05, rawDelta));
-
-        const prevScale = window.mapWorldState.scale;
-        const prevLevel = window.mapLevel || 'machines';
-
-        let newScale = prevScale + delta;
-        newScale = Math.min(3, Math.max(0.3, newScale));
-
-        // Jos muutos on mitätön → ei tehdä mitään
-        if (Math.abs(newScale - prevScale) < 0.0001) return;
-
-        // 🔍 Päivitä zoom
-        // 🔍 ZOOM HIIREN KOHTAAN (ankkuroitu)
-const rect = viewport.getBoundingClientRect();
-const mx = e.clientX - rect.left;
-const my = e.clientY - rect.top;
-
-const prevScale2 = prevScale;
-const scaleRatio = newScale / prevScale2;
-
-// Siirrä karttaa niin, että zoom tapahtuu hiiren alla
-window.mapWorldState.x =
-    mx - scaleRatio * (mx - window.mapWorldState.x);
-
-window.mapWorldState.y =
-    my - scaleRatio * (my - window.mapWorldState.y);
-
-window.mapWorldState.scale = newScale;
-applyMapTransform();
-
-
-        // 🗺️ Päätä karttataso zoomin perusteella
-        const newLevel = resolveMapLevelFromZoom(newScale);
-
-        // 🔁 Jos karttataso vaihtui
-        if (newLevel !== prevLevel) {
-            window.mapLevel = newLevel;
-
-            // 🧠 Venttiilitasolla lukitse zoom järkevälle tasolle
-            if (newLevel === 'valves') {
-                window.mapWorldState.scale = ZOOM_TO_VALVES + 0.15;
-                applyMapTransform();
-            }
-
-            console.log(
-                '🔄 Karttataso vaihtui:',
-                newLevel,
-                'scale=',
-                window.mapWorldState.scale.toFixed(2)
-            );
-
-            if (typeof renderVisualContent === 'function') {
-                renderVisualContent();
-            }
-
-            // 🎯 Sovita kartta näkymään tasovaihdon jälkeen
-            if (typeof fitMapToScreen === 'function') {
-                requestAnimationFrame(() => {
-                    fitMapToScreen(80);
-                });
-            }
-        }
-    }, { passive: false });
 }
 
 
@@ -508,9 +360,7 @@ ensureUiState();
 
 
 // ---------- VIEW API ----------
-// ---------- VIEW API ----------
 function showView(viewId) {
-    // ✅ pidä molemmat state-maailmat samassa
     window.appState = window.appState || {};
     window.uiState  = window.uiState  || {};
 
@@ -525,18 +375,18 @@ function showView(viewId) {
     const target = document.getElementById(viewId);
     if (target) {
         target.classList.add('active');
-        target.style.display = 'block';
+
+        // ✅ ÄLÄ pakota block (antaa CSS:n päättää, ja estää scroll/sticky-bugit)
+        target.style.display = '';
     }
 
-    // jos sinulla on FAB-logiikka, se saa nyt oikean viewn
     if (typeof updateFabVisibility === 'function') {
         try { updateFabVisibility(); } catch (e) {}
     }
-        // ✅ Kun mennään etusivun projektinäkymään, piirrä lista aina
+
     if (viewId === 'view-projects') {
         try { renderProjectsHome(); } catch (e) { console.warn(e); }
     }
-
 }
 
 // ===============================
@@ -3420,14 +3270,15 @@ function refreshOpenKValveModal(type, model, size) {
     }
 }
 
+function resetMapZoomForLevel() {
+  if (!window.mapWorldState) return;
 
+  window.mapWorldState.scale = 1;
+  window.mapWorldState.x = 0;
+  window.mapWorldState.y = 0;
 
-
-
-
-
-
-
+  applyMapTransform();
+}
 
 
 
@@ -4549,8 +4400,23 @@ function setActiveMachine(machineId) {
     // ✅ AINOA KOHTA missä aktiivinen kone vaihtuu
     window.uiState.activeMachineId = machine.id;
 
-    // 🔁 Päivitä KAIKKI näkymät yhdellä ketjulla
+    // ✅ Tallenna UI-tila projektiin (koska muu koodi käyttää p.uiState heijastusta)
+    persistUiStateToProject?.();
+
+    // ✅ Päivitä näkymät heti (kartta + mittalista)
+    if (typeof renderDetailsList === 'function') {
+        renderDetailsList();
+    }
+
+    if (typeof renderVisualContent === 'function') {
+        renderVisualContent();
+    } else if (typeof renderHorizontalMap === 'function') {
+        // fallback jos joku näkymä kutsuu suoraan
+        const vis = document.getElementById('visContent');
+        if (vis) renderHorizontalMap(vis);
+    }
 }
+
 
 function setValveAsIndex({ valve, machineId, ductId }) {
     const project = getActiveProject();
@@ -4907,6 +4773,8 @@ function closeCreateDuctModal() {
 
 
 function activateProject(projectId, mode = 'home') {
+    window.measurementListEditLock = false;
+
     if (!window.appState) window.appState = {};
 
     // ✅ appState (uusi tapa)
@@ -4925,6 +4793,8 @@ function activateProject(projectId, mode = 'home') {
 
 
 function renderActiveProject() {
+    // 🔒 ÄLÄ koskaan renderöi koko projektia kesken mittalistan editoinnin
+   
     const projectId = window.appState?.activeProjectId;
     if (!projectId) {
         console.warn('renderActiveProject: ei aktiivista projektia');
@@ -5528,59 +5398,47 @@ function resolveKValueForValve(valve) {
 }
 
 function renderDetailsList(force = false) {
+    console.log('🔥 renderDetailsList CALLED');
+    console.log('🧱 renderDetailsList START');
 
-
-    // ─────────────────────────────────────────────
-    // 🔑 AKTIIVINEN PROJEKTI (YKSINEN TOTUUS)
-    // ─────────────────────────────────────────────
+    // 🔑 AKTIIVINEN PROJEKTI
     const project = projects.find(p => p.id === activeProjectId);
     if (!project) {
         console.warn('renderDetailsList: ei aktiivista projektia');
         return;
     }
 
-    // ─────────────────────────────────────────────
     // 🔑 AKTIIVINEN KONE
-    // ─────────────────────────────────────────────
     const machine = getActiveMachine(project);
     if (!machine) {
         console.warn('renderDetailsList: ei aktiivista konetta');
         return;
     }
 
-    // ─────────────────────────────────────────────
-    // 1️⃣ Konevalitsin (yläpalkki / mittalistan header)
-    // ─────────────────────────────────────────────
+    // 1️⃣ Konevalitsin
     const machineBar = document.getElementById('detailsMachineBar');
     if (machineBar && typeof renderMachineSelector === 'function') {
         machineBar.innerHTML = '';
         renderMachineSelector(machineBar);
     }
 
-    // ─────────────────────────────────────────────
-// 2️⃣ Mittalista (V3 – AINOA TOTUUS)
-// ─────────────────────────────────────────────
-const listEl = document.getElementById('measurementList');
-if (!listEl) {
-    console.warn('renderDetailsList: measurementList-elementti puuttuu');
-    return;
-}
-
-// 🔒 Renderöi AINA V3 (ei fallbackeja)
-renderMeasurementListV3(listEl, project, machine);
-
-// 🔗 Bind mittalista V3 vain kerran
-if (typeof bindMeasurementListV3 === 'function') {
-    if (!listEl.__boundV3) {
-        bindMeasurementListV3(listEl);
-        listEl.__boundV3 = true;
+    // 2️⃣ Mittalista (AINOA TOTUUS)
+    const listEl = document.getElementById('measurementList');
+    if (!listEl) {
+        console.warn('renderDetailsList: measurementList-elementti puuttuu');
+        return;
     }
-}
 
+    renderMeasurementListV3(listEl, project, machine);
 
-    // ─────────────────────────────────────────────
-    // 3️⃣ Workflow-ohje (ei saa kaataa näkymää)
-    // ─────────────────────────────────────────────
+    if (typeof bindMeasurementListV3 === 'function') {
+        if (!listEl.__boundV3) {
+            bindMeasurementListV3(listEl);
+            listEl.__boundV3 = true;
+        }
+    }
+
+    // 3️⃣ Workflow-ohje
     if (typeof updateWorkflowHint === 'function') {
         try {
             updateWorkflowHint(project);
@@ -5589,17 +5447,7 @@ if (typeof bindMeasurementListV3 === 'function') {
         }
     }
 
-    // ─────────────────────────────────────────────
-    // 4️⃣ Visuaalinen näkymä (kartta / puu)
-    // ─────────────────────────────────────────────
-    const visContainer = document.getElementById('visContent');
-    if (visContainer && typeof renderHorizontalMap === 'function') {
-        try {
-            renderHorizontalMap(visContainer);
-        } catch (err) {
-            console.warn('renderHorizontalMap epäonnistui', err);
-        }
-    }
+    console.log('🧱 renderDetailsList END');
 }
 
 
@@ -6381,13 +6229,30 @@ function renderDetailsView() {
                 <button class="btn btn-secondary" style="margin-left:8px;" onclick="archiveProject(activeProjectId)">📁 Arkistoi projekti</button>
             </div>
 
-            <!-- LISTAT -->
-            <h4 style="margin:0; border-bottom:1px solid #ddd; padding-bottom:5px; font-size:14px;">
-                Mittauspöytäkirja / Lista (${currentMode})
-            </h4>
+            <!-- 📋 MITTAUSLISTA (UI SHELL) -->
+<div class="measurement-shell">
 
-            <div id="measurementList" style="margin-top:10px;"></div>
-        </div>
+  <div class="measurement-header">
+    <div class="mh-left">
+      <button class="mh-select" type="button">${machine?.name || 'TK'} ▾</button>
+      <button class="mh-select" type="button">${currentMode || 'home'} ▾</button>
+      <button class="mh-select" type="button">Hz ▾</button>
+      <button class="mh-select" type="button">% ▾</button>
+      <button class="mh-select" type="button">Pa ▾</button>
+    </div>
+
+    <div class="mh-right">
+      <input class="mh-search" type="text" placeholder="Hae huone / päätelaite">
+      <button class="mh-action" type="button" onclick="openReportView()">Raportti</button>
+    </div>
+  </div>
+
+  <div class="measurement-body">
+    <div id="measurementList"></div>
+  </div>
+
+</div>
+
     `;
 
     // 🔧 Etusivun konevalitsin (DOM on nyt olemassa)
@@ -6397,9 +6262,8 @@ function renderDetailsView() {
         renderMachineSelector(detailsBar);
     }
 
-  // ✅ Renderöi A-mallin mittalista (V3) — turvallisesti, rikkomatta muuta näkymää
-requestAnimationFrame(() => {
-    // Haetaan nimenomaan tästä viewistä ettei osuta vahingossa väärään elementtiin
+// ✅ Renderöi A-mallin mittalista (V3) heti (EI requestAnimationFrame, koska se katkaisee fokuksen)
+(() => {
     const listContainer = view.querySelector('#measurementList');
 
     if (!listContainer) {
@@ -6407,8 +6271,10 @@ requestAnimationFrame(() => {
         return;
     }
 
+    // 🔒 Jos käyttäjä on jo aloittanut editoinnin, älä tuhoa DOMia alta
+    
+    
     try {
-        // 🔧 TÄRKEÄ: laske indeksit ja suhteet KAIKILLE rungoille ennen listan renderiä
         const mode = window.currentMode || 'home';
         const ductsForUi = machine?.modes?.[mode]?.ducts || [];
 
@@ -6418,10 +6284,8 @@ requestAnimationFrame(() => {
             }
         });
 
-        // 📋 Renderöi mittalista
         renderMeasurementListV3(listContainer, p, machine);
 
-        // 🔗 Bind vain kerran
         if (!listContainer.__boundV3) {
             bindMeasurementListV3(listContainer);
             listContainer.__boundV3 = true;
@@ -6429,7 +6293,7 @@ requestAnimationFrame(() => {
     } catch (err) {
         console.error('renderDetailsView: mittalistan render/bind kaatui', err);
     }
-});
+})();
 
 // 🧭 Päivitä workflow-ohje
 updateWorkflowHint(p);
@@ -7191,70 +7055,163 @@ function openModal(html) {
     ov.style.display = 'flex';
 }
 
-function renderVisualContent() {
-    console.log('🔥 renderVisualContent CALLED, mapLevel=', window.mapLevel);
+const MAP_LEVELS = ['machines', 'ducts', 'valves'];
 
-    // 1) VARMISTA MAP DOM
-    const dom = ensureMapDom();
-    if (!dom) return;
+function goToLevel(level) {
+  if (!MAP_LEVELS.includes(level)) return;
 
-    const { world } = dom;
+  window.mapLevel = level;
 
-    const p = projects.find(x => x.id === activeProjectId);
-    if (!p) return;
+  // machines/ducts = kartta, valves = kortit
+  window.visualView = (level === 'valves') ? 'cards' : 'map';
 
-    // Päivitä kartan valitsin (napit)
-    const selector = document.getElementById('mapViewSelector');
-    if (selector) {
-        const machine = getActiveMachine(p);
-        const mode = window.currentMode || 'home';
-        const ducts = machine?.modes?.[mode]?.ducts || [];
-        renderMapViewSelector(selector, ducts);
-    }
+  // ✅ TASONVAIHDOSSA aina turvallinen zoom/pan
+  resetMapZoomForLevel();
 
-    // Yläpalkki (ennallaan)
-    const roofBar = document.getElementById('visRoofBar');
-    if (roofBar) {
-        roofBar.innerHTML = '';
-
-        if (window.activeDuctId) {
-            roofBar.innerHTML += `
-                <button class="btn btn-secondary"
-                        style="margin-right:8px; padding:4px 8px; font-size:12px;"
-                        onclick="exitDuctZoom()">
-                    ⬅ Takaisin runkoihin
-                </button>
-            `;
-        }
-
-        renderMachineSelector(roofBar);
-    }
-
-    // 2) KARTTATASOLOGIIKKA
-    if (!window.mapLevel) {
-        window.mapLevel = resolveMapLevelFromZoom(window.mapWorldState.scale);
-    }
-
-    // 3) RENDERÖINTI WORLDIIN
-    world.innerHTML = '';
-
-    if (window.mapLevel === 'machines') {
-        renderMachineOverview(world);
-        applyMapTransform();
-        return;
-    }
-
-    // ducts + valves: toistaiseksi sama "runkokartta"
-    renderHorizontalMap(dom.containerEl);
-    applyMapTransform();
-
-    try {
-        applyStoredMapUiState?.();
-    } catch (e) {
-        console.warn('applyStoredMapUiState failed', e);
-    }
+  renderVisualContent();
 }
 
+
+function goNextMapLevel() {
+    const cur = window.mapLevel || 'machines';
+    const idx = Math.max(0, MAP_LEVELS.indexOf(cur));
+    const next = MAP_LEVELS[Math.min(MAP_LEVELS.length - 1, idx + 1)];
+    goToLevel(next);
+}
+
+function goPrevMapLevel() {
+    const cur = window.mapLevel || 'machines';
+    const idx = Math.max(0, MAP_LEVELS.indexOf(cur));
+    const prev = MAP_LEVELS[Math.max(0, idx - 1)];
+    goToLevel(prev);
+}
+
+
+
+function fitMapToScreen() {
+  if (!window.mapWorldState) window.mapWorldState = { x: 0, y: 0, scale: 1 };
+  window.mapWorldState.x = 0;
+  window.mapWorldState.y = 0;
+  window.mapWorldState.scale = 1;
+  applyMapTransform();
+}
+
+function renderVisualContent() {
+  console.log('🔥 renderVisualContent CALLED', 'mapLevel=', window.mapLevel, 'visualView=', window.visualView);
+
+  const dom = ensureMapDom();
+  if (!dom) return;
+
+  const { world, containerEl } = dom;
+
+  // 🔒 PAKKOVARMISTUS: mapWorld ei saa olla piilossa
+  world.style.display = 'block';
+  world.style.visibility = 'visible';
+  world.style.opacity = '1';
+
+  const p = projects.find(x => x.id === activeProjectId);
+  if (!p) return;
+
+  ensureUiState();
+
+  // 🔒 mapLevel vain sallittuihin
+  const allowedLevels = ['machines', 'ducts', 'valves'];
+  if (!allowedLevels.includes(window.mapLevel)) window.mapLevel = 'machines';
+
+  // oletus visualView
+  if (!window.visualView) {
+    window.visualView = (window.mapLevel === 'valves') ? 'cards' : 'map';
+  }
+
+  // 🔒 mapWorldState guard
+  if (!window.mapWorldState || !isFinite(window.mapWorldState.scale) || window.mapWorldState.scale < 0.2 || window.mapWorldState.scale > 5) {
+    window.mapWorldState = { x: 0, y: 0, scale: 1 };
+  }
+
+  // Päivitä runkosuodatin vain jos ei machines
+  const selector = document.getElementById('mapViewSelector');
+  if (selector) {
+    selector.innerHTML = '';
+    if (window.mapLevel !== 'machines') {
+      const machine = getActiveMachine(p);
+      const mode = window.currentMode || 'home';
+      const ducts = machine?.modes?.[mode]?.ducts || [];
+      renderMapViewSelector(selector, ducts);
+    }
+  }
+
+  // Yläpalkki
+  const roofBar = document.getElementById('visRoofBar');
+  if (roofBar) {
+    roofBar.innerHTML = '';
+    if (window.mapLevel !== 'machines') {
+      roofBar.innerHTML += `
+        <button class="btn btn-secondary"
+                style="margin-right:8px; padding:4px 8px; font-size:12px;"
+                onclick="goBackVisualLevel()">
+          ⬅ Takaisin
+        </button>
+      `;
+    }
+    renderMachineSelector(roofBar);
+  }
+
+  // Tyhjennä vain world
+  world.innerHTML = '';
+
+  // Render tasoittain (Yksi tie)
+  if (window.mapLevel === 'machines') {
+    window.visualView = 'map';
+    renderMachineOverview(world);
+    applyMapTransform();
+    return;
+  }
+
+  if (window.mapLevel === 'ducts') {
+    window.visualView = 'map';
+    renderHorizontalMap(containerEl); // kirjoittaa worldiin ensureMapDom():in kautta
+    applyMapTransform();
+    return;
+  }
+
+  if (window.mapLevel === 'valves') {
+    window.visualView = 'map';
+
+    // Venttiilit kartassa (sama pohja kuin ducts)
+    renderHorizontalMap(containerEl);
+
+    applyMapTransform();
+    return;
+}
+
+
+  // fallback
+  window.mapLevel = 'machines';
+  window.visualView = 'map';
+  renderMachineOverview(world);
+  applyMapTransform();
+}
+
+function goBackVisualLevel() {
+  // ✅ Korttinäkymästä takaisin aina karttaan
+  if (window.visualView === 'cards') {
+    window.visualView = 'map';
+    renderVisualContent();
+    return;
+  }
+
+  // ✅ Tasotaaksepäin: valves -> ducts -> machines
+  const cur = window.mapLevel || 'machines';
+  if (cur === 'valves') window.mapLevel = 'ducts';
+  else if (cur === 'ducts') window.mapLevel = 'machines';
+  else window.mapLevel = 'machines';
+
+  // ✅ Kun taso vaihtuu, resetoi pan/zoom ettei kartta karkaa ruudun ulkopuolelle
+  resetMapZoomForLevel();
+
+  window.visualView = 'map';
+  renderVisualContent();
+}
 
 
 function prepareRelativeUiDataForDuct(duct) {
@@ -7389,162 +7346,6 @@ function getMachinesForProject() {
 
 
 
-function renderVerticalStackInto(container, p) {
-const mm = getActiveMachineMode(p, window.currentMode || 'home');
-const ducts = mm.ducts;
-
-
-    // ✅ Kohta 1: myös pystynäkymä käyttää samaa “aktiivista” venttiililähdettä
-    const valves = getActiveValvesForMap(p);
-
-    const currentMode = window.currentMode || 'home';
-
-    const isApt = (p.systemType === 'kerrostalo');
-    let shafts = isApt
-        ? ducts.filter(d => d.group === 'apt')
-        : ducts.filter(d => d.type === 'extract' && d.group === 'roof');
-
-    if (window._visTowerFilter) {
-        const one = shafts.find(s => s.id === window._visTowerFilter);
-        if (one) shafts = [one];
-    }
-
-    container.innerHTML = '';
-    container.style.display = 'flex';
-    container.style.flexDirection = 'column';
-
-    /* =====================================================
-       1️⃣ KONEKORTTI (näkyy aina)
-       ===================================================== */
-    const machine = p.modes?.[currentMode]?.machines?.[0];
-
-    const machineWrap = document.createElement('div');
-    machineWrap.className = 'vis-machine-col';
-    machineWrap.innerHTML = `
-        <div class="vis-machine-card"
-            style="${window.currentPhase !== 'ADJUST_MACHINE'
-                ? 'opacity:0.6; cursor:not-allowed; pointer-events:none;'
-                : ''}"
-            onclick="${window.currentPhase === 'ADJUST_MACHINE'
-                ? 'editMachine(0)'
-                : 'return false;'}">
-
-            <div class="vis-machine-header">
-                <div class="vis-machine-icon">⚙️</div>
-                <div class="vis-machine-title">
-                    ${machine?.name || 'IV-kone'}
-                </div>
-            </div>
-
-            <div style="font-size:12px; padding:6px 0;">
-                Ilmavirta: ${machine?.flow ?? '-'}
-            </div>
-
-            <div style="font-size:10px; color:#aaa; text-transform:uppercase;">
-                Tila: ${currentMode}
-            </div>
-        </div>
-    `;
-    container.appendChild(machineWrap);
-
-    /* =====================================================
-       2️⃣ EI POISTOKANAVIA
-       ===================================================== */
-    if (shafts.length === 0) {
-        const info = document.createElement('div');
-        info.style.cssText = 'color:#666; font-size:14px; padding:12px;';
-        info.innerHTML =
-            "Ei poistokanavia.<br>Luo 'Runkokanava' (esim. A-Rappu Poisto) nähdäksesi tornin.";
-        container.appendChild(info);
-        return;
-    }
-
-    /* =====================================================
-       3️⃣ TORNIT + ASUNNOT (EI VENTTIILIKORTTEJA)
-       ===================================================== */
-    shafts.forEach(shaft => {
-
-        const tower = document.createElement('div');
-        tower.className = 'vis-tower';
-
-        const head = document.createElement('div');
-        head.className = 'vis-tower-head';
-        head.textContent = shaft.name || 'Rappu';
-        tower.appendChild(head);
-
-        const pipe = document.createElement('div');
-        pipe.className = 'vis-shaft-line';
-        tower.appendChild(pipe);
-
-        const floorsContainer = document.createElement('div');
-        floorsContainer.className = 'vis-floors-container';
-
-        // Ryhmittele venttiilit asunnoittain
-        const shaftValves = valves.filter(v => String(v.parentDuctId) === String(shaft.id));
-        const aptGroups = {};
-
-        shaftValves.forEach(v => {
-            const apt = v.apartment || 'Muu';
-            if (!aptGroups[apt]) {
-                aptGroups[apt] = {
-                    flow: 0,
-                    target: 0,
-                    maxPa: 0,
-                    avgPos: [],
-                };
-            }
-            aptGroups[apt].flow += parseFloat(v.flow) || 0;
-            aptGroups[apt].target += parseFloat(v.target) || 0;
-            aptGroups[apt].maxPa = Math.max(
-                aptGroups[apt].maxPa,
-                parseFloat(v.measuredP) || 0
-            );
-            if (v.pos !== null && v.pos !== undefined) {
-                aptGroups[apt].avgPos.push(parseFloat(v.pos));
-            }
-        });
-
-        Object.entries(aptGroups).forEach(([apt, data]) => {
-
-            const diff =
-                data.target > 0
-                    ? Math.abs(data.flow - data.target) / data.target
-                    : null;
-
-            let bg = '#f1f1f1';
-            if (diff !== null) {
-                if (diff < 0.10) bg = '#d6f5d6';
-                else if (diff < 0.15) bg = '#fff3cd';
-                else bg = '#fde2e1';
-            }
-
-            const avgPos = data.avgPos.length
-                ? Math.round(data.avgPos.reduce((a, b) => a + b, 0) / data.avgPos.length)
-                : '-';
-
-            const box = document.createElement('div');
-            box.className = 'vis-apt';
-            box.style.background = bg;
-            box.innerHTML = `
-                <b>${apt}</b><br>
-                ${data.flow.toFixed(1)} / ${data.target.toFixed(1)} l/s<br>
-                ${data.maxPa || '-'} Pa<br>
-                Av: ${avgPos} %
-            `;
-
-            box.onclick = () => {
-                window.activeApartmentId = apt;
-                window.activeVisMode = 'horizontal';
-                renderVisualContent();
-            };
-
-            floorsContainer.appendChild(box);
-        });
-
-        tower.appendChild(floorsContainer);
-        container.appendChild(tower);
-    });
-}
 
 function getAdjustmentProgress(analysis) {
     if (!analysis || !analysis.valves) {
@@ -8059,21 +7860,18 @@ function renderHorizontalMap(container) {
             String(d.id) === String(window.mapViewFilter.ductId)
         );
     }
+// ✅ Näytä rungot myös ennen mittauksia: riittää että rungossa on yksikin ei-draft venttiili
+const filteredDucts = allDucts.filter(d =>
+    Array.isArray(d.valves) &&
+    d.valves.some(v => !v.__isDraft)
+);
 
-    // Suodata pois rungot joissa ei ole mitään järkevää näytettävää
-    const filteredDucts = allDucts.filter(d =>
-        Array.isArray(d.valves) &&
-        d.valves.some(v =>
-            !v.__isDraft &&
-            (isFinite(getValveFlowEffective(v)) || isFinite(v.measuredP))
-        )
-    );
+if (!filteredDucts.length) {
+    world.innerHTML = `<div class="map-empty">Ei venttiileitä (vain draft / tyhjä)</div>`;
+    applyMapTransform();
+    return;
+}
 
-    if (!filteredDucts.length) {
-        world.innerHTML = `<div class="map-empty">Ei mitattavia venttiileitä</div>`;
-        applyMapTransform();
-        return;
-    }
 
     // A-malli UI-data
     filteredDucts.forEach(d => prepareRelativeUiDataForDuct(d));
@@ -8166,20 +7964,19 @@ function renderHorizontalMap(container) {
             }).join('');
 
             return `
-                <div class="trunk-pipe">
-                    <div class="trunk-pipe-line clickable"
-                         onclick="captureCurrentMapUiState();
-                                  zoomToDuct('${escapeJsString(d.id)}')">
-                        <span class="trunk-name">
-                            ${escapeHtml(d.name || `Runko ${trunkIndex + 1}`)}
-                        </span>
-                    </div>
+  <div class="map-valves-row pipe-attached">
+      
+      <!-- PUTKI -->
+      <div class="trunk-pipe"></div>
 
-                    <div class="map-valves-row pipe-attached">
-                        ${cards}
-                    </div>
-                </div>
-            `;
+      <!-- VENTTIILIKORTIT -->
+      <div class="valve-cards-layer">
+          ${cards}
+      </div>
+
+  </div>
+`;
+
         }).join('');
 
         if (!trunkBlocks) return '';
@@ -8219,6 +8016,31 @@ function renderHorizontalMap(container) {
     applyMapTransform();
 }
 
+function renderValveCardsView(container) {
+  const p = projects.find(x => x.id === activeProjectId);
+  if (!p) return;
+
+  const machine = getActiveMachine(p);
+  if (!machine) return;
+
+  const mode = window.currentMode || 'home';
+  const ducts = machine.modes?.[mode]?.ducts || [];
+
+  const valves = ducts.flatMap(d => d.valves || []);
+
+  container.innerHTML = `
+    <div class="valve-cards-layer">
+      ${valves.map(v => `
+        <div class="valve-card">
+          <b>${v.room || v.name || 'Venttiili'}</b><br>
+          ${v.flow ?? '-'} / ${v.target ?? '-'} l/s<br>
+          Pa: ${v.measuredP ?? '-'}<br>
+          Av: ${v.pos ?? '-'} %
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
 
 
 function renderMachineOverview(container) {
@@ -9530,70 +9352,7 @@ function closeGenerator() {
 
 function setVisualMode(mode) {
     window.activeVisMode = mode;
-
-    if (mode === 'horizontal') {
-        window.visualZoom = 'machine';
-    }
-
     renderVisualContent();
-}
-
-
-// Zoom controls for visual view
-function zoomVisual(delta){
-    const el = document.getElementById('visContent');
-    if(!el) return;
-    const cur = parseFloat(localStorage.getItem('visZoom')||'1');
-    const next = Math.max(0.6, Math.min(2.0, cur + delta));
-    const auto = parseFloat(sessionStorage.getItem('visAutoScale')||'1');
-    el.style.transform = `scale(${next * auto})`;
-    try { localStorage.setItem('visZoom', String(next)); } catch(e) {}
-}
-// Apply stored zoom on visual show
-function applyStoredZoom(){
-    const el = document.getElementById('visContent');
-    if(!el) return;
-    const cur = parseFloat(localStorage.getItem('visZoom')||'1');
-    const auto = parseFloat(sessionStorage.getItem('visAutoScale')||'1');
-    el.style.transform = `scale(${cur * auto})`;
-}
-
-// Auto-skaalaa pystynäkymä, jotta kaikki rappujen tornit mahtuvat vaakaan
-function autoFitVertical(){
-    try {
-        const area = document.getElementById('visScrollArea');
-        const el = document.getElementById('visContent');
-        if(!area || !el) return;
-        const contentWidth = el.scrollWidth;
-        const availWidth = area.clientWidth - 24;
-        if (contentWidth <= 0 || availWidth <= 0) return;
-
-        // Ehdot: yli 2 rappua TAI elementtien (asunnot) päällekkäisyys
-        const towerCount = el.querySelectorAll('.vis-tower').length;
-        const apts = Array.from(el.querySelectorAll('.vis-apt'));
-        let overlaps = false;
-        for (let i = 0; i < apts.length && !overlaps; i++) {
-            const ri = apts[i].getBoundingClientRect();
-            for (let j = i + 1; j < apts.length; j++) {
-                const rj = apts[j].getBoundingClientRect();
-                const separated = (ri.right <= rj.left) || (ri.left >= rj.right) || (ri.bottom <= rj.top) || (ri.top >= rj.bottom);
-                if (!separated) { overlaps = true; break; }
-            }
-        }
-
-        let auto = 1.0;
-        if (towerCount > 2 || overlaps) {
-            if (contentWidth > availWidth) {
-                auto = Math.max(0.50, Math.min(1.0, availWidth / contentWidth));
-            }
-        }
-        sessionStorage.setItem('visAutoScale', String(auto));
-        // Yhdistä manuaalinen zoomi ja automaattinen
-        const manual = parseFloat(localStorage.getItem('visZoom')||'1');
-        el.style.transform = `scale(${manual * auto})`;
-    } catch(e) {
-        // Älä häiritse käyttäjää virheistä
-    }
 }
 
 // Rappusuodatin
@@ -11088,23 +10847,7 @@ function renderMapViewSelector(container, ducts = []) {
     const isDucts = window.mapLevel === 'ducts';
 
     const topRow = `
-        <button class="btn btn-secondary"
-            style="padding:5px 10px; font-size:12px; ${isMachines ? 'background:#2196F3;color:#fff;border-color:#1976D2;' : ''}"
-            onclick="
-                window.mapLevel='machines';
-                renderVisualContent();
-            ">
-            🧩 Koneet
-        </button>
-
-        <button class="btn btn-secondary"
-            style="padding:5px 10px; font-size:12px; ${isDucts ? 'background:#2196F3;color:#fff;border-color:#1976D2;' : ''}"
-            onclick="
-                window.mapLevel='ducts';
-                renderVisualContent();
-            ">
-            🧱 Rungot
-        </button>
+   
     `;
 
     // Runkosuodatin näkyy vain ducts-tilassa
@@ -11700,20 +11443,23 @@ const cls =
 
 }
 function renderMeasurementListV3(listEl, project, machine) {
+    console.log('📋 renderMeasurementListV3');
+
     if (!listEl || !project || !machine) return;
 
     const mode = window.currentMode || 'home';
     const mm = machine.modes?.[mode];
     const ducts = mm?.ducts || [];
 
-    // ✅ Varmista että on aina yksi draft ensimmäisen rungon perässä
+    /* ─────────────────────────────
+       DRAFT-VARMISTUS
+       ───────────────────────────── */
     const ensureDraftExists = () => {
         const d0 = ducts?.[0];
         if (!d0) return;
 
         d0.valves = Array.isArray(d0.valves) ? d0.valves : [];
 
-        // poista ylimääräiset draftit (pidä viimeinen)
         const drafts = d0.valves.filter(v => v && v.__isDraft);
         if (drafts.length > 1) {
             const keepId = drafts[drafts.length - 1].id;
@@ -11722,27 +11468,28 @@ function renderMeasurementListV3(listEl, project, machine) {
 
         const last = d0.valves[d0.valves.length - 1];
         if (!last || !last.__isDraft) {
-            if (typeof createDraftValve === 'function') {
-                createDraftValve(d0);
-            } else {
-                d0.valves.push({
-                    id: 'draft_' + Date.now(),
-                    __isDraft: true,
-                    room: '',
-                    type: '',
-                    pos: '',
-                    kWorking: '',
-                    measuredP: '',
-                    flow: '',
-                    target: ''
-                });
-            }
+            d0.valves.push({
+                id: 'draft_' + Date.now(),
+                __isDraft: true,
+                room: '',
+                type: '',
+                kpl: 1,
+                pos: '',
+                kWorking: '',
+                measuredP: '',
+                flow: '',
+                target: ''
+            });
         }
     };
 
-    ensureDraftExists();
+    if (!window.measurementListEditLock) {
+        ensureDraftExists();
+    }
 
-    // apu: prosenttiväri
+    /* ─────────────────────────────
+       APUT
+       ───────────────────────────── */
     const getPctColor = (pct) => {
         if (!Number.isFinite(pct)) return '#999';
         if (pct < 80) return '#c0392b';
@@ -11751,134 +11498,167 @@ function renderMeasurementListV3(listEl, project, machine) {
         return '#2980b9';
     };
 
+    const getKpl = (v) => {
+        const k = Number(v?.kpl);
+        return Number.isFinite(k) && k > 0 ? k : 1;
+    };
+
+    /* ─────────────────────────────
+       HTML-ALKU
+       ───────────────────────────── */
     let html = `
-        <table class="measurement-table">
-            <thead>
-                <tr>
-                    <th>HUONE</th>
-                    <th>PÄÄTELAITE</th>
-                    <th>PA</th>
-                    <th>AVAUS</th>
-                    <th>K</th>
-                    <th>L/S</th>
-                    <th>SUUNN</th>
-                    <th>%</th>
-                    <th></th>
-                </tr>
-            </thead>
-            <tbody>
-    `;
+<table class="measurement-table">
+<thead>
+<tr>
+  <th>HUONE</th>
+  <th>PÄÄTELAITE</th>
+  <th>KPL</th>
+  <th>PA</th>
+  <th>AVAUS</th>
+  <th>K</th>
+  <th>L/S</th>
+  <th>SUUNN</th>
+  <th>%</th>
+  <th></th>
+</tr>
+</thead>
+<tbody>
+`;
+
+    /* ─────────────────────────────
+       KONEEN KOKONAISSUMMAT
+       ───────────────────────────── */
+    const machineTotals = {
+        supply: { flow: 0, target: 0 },
+        extract: { flow: 0, target: 0 }
+    };
 
     ducts.forEach(duct => {
-        const valves = (duct.valves || []);
-        if (valves.length === 0) return;
-
-        const sumFlow = valves.reduce((s, v) => {
-            const f = (typeof getValveFlowEffective === 'function')
+        (duct.valves || []).forEach(v => {
+            const kpl = getKpl(v);
+            const eff = (typeof getValveFlowEffective === 'function')
                 ? getValveFlowEffective(v)
                 : Number(v.flow);
-            return s + (Number.isFinite(f) ? f : 0);
-        }, 0);
 
-        const sumTarget = valves.reduce((s, v) => s + (Number(v.target) || 0), 0);
-        const grpPct = sumTarget > 0 ? Math.round((sumFlow / sumTarget) * 100) : null;
+            if (!Number.isFinite(eff)) return;
+
+            const bucket = duct.type === 'supply'
+                ? machineTotals.supply
+                : machineTotals.extract;
+
+            bucket.flow += eff * kpl;
+            bucket.target += Number(v.target) || 0;
+        });
+    });
+
+    const sup = machineTotals.supply;
+    const ext = machineTotals.extract;
+
+    const supPct = sup.target > 0 ? Math.round((sup.flow / sup.target) * 100) : null;
+    const extPct = ext.target > 0 ? Math.round((ext.flow / ext.target) * 100) : null;
+
+    const allFlow = sup.flow + ext.flow;
+    const allTar = sup.target + ext.target;
+    const allPct = allTar > 0 ? Math.round((allFlow / allTar) * 100) : null;
+
+    /* ─────────────────────────────
+       KONEEN SUMMAT – YLÄOSA
+       ───────────────────────────── */
+    html += `
+<tr class="machine-sum machine-sum-supply">
+  <td colspan="10">
+    <strong>Σ TULO (kone)</strong>
+    &nbsp;|&nbsp;
+    Mitattu: <strong>${sup.flow.toFixed(1)}</strong> l/s
+    &nbsp;|&nbsp;
+    Suunn.: <strong>${sup.target.toFixed(1)}</strong> l/s
+    &nbsp;|&nbsp;
+    <strong style="color:${getPctColor(supPct)}">${supPct ?? '-' } %</strong>
+  </td>
+</tr>
+
+<tr class="machine-sum machine-sum-extract">
+  <td colspan="10">
+    <strong>Σ POISTO (kone)</strong>
+    &nbsp;|&nbsp;
+    Mitattu: <strong>${ext.flow.toFixed(1)}</strong> l/s
+    &nbsp;|&nbsp;
+    Suunn.: <strong>${ext.target.toFixed(1)}</strong> l/s
+    &nbsp;|&nbsp;
+    <strong style="color:${getPctColor(extPct)}">${extPct ?? '-' } %</strong>
+  </td>
+</tr>
+
+<tr class="machine-sum machine-sum-total">
+  <td colspan="10">
+    <strong>Σ KONE YHTEENSÄ</strong>
+    &nbsp;|&nbsp;
+    Mitattu: <strong>${allFlow.toFixed(1)}</strong> l/s
+    &nbsp;|&nbsp;
+    Suunn.: <strong>${allTar.toFixed(1)}</strong> l/s
+    &nbsp;|&nbsp;
+    <strong style="color:${getPctColor(allPct)}">${allPct ?? '-' } %</strong>
+  </td>
+</tr>
+`;
+
+    /* ─────────────────────────────
+       RUNGOT + VENTTIILIT
+       ───────────────────────────── */
+    ducts.forEach(duct => {
+        const valves = duct.valves || [];
+        if (!valves.length) return;
 
         html += `
-            <tr class="group-row ${duct.type}">
-                <td colspan="8">
-                    ${duct.type === 'supply' ? 'TULO' : 'POISTO'}
-                    ${duct.name ? ' – ' + duct.name : ''}
-                </td>
-                <td style="text-align:right;font-weight:bold;color:${getPctColor(grpPct)}">
-                    ${grpPct !== null ? grpPct + ' %' : ''}
-                </td>
-            </tr>
-        `;
+<tr class="group-row ${duct.type}">
+  <td colspan="10">
+    ${duct.type === 'supply' ? 'TULO' : 'POISTO'}${duct.name ? ' – ' + duct.name : ''}
+  </td>
+</tr>
+`;
 
         valves.forEach(v => {
             const isDraft = !!v.__isDraft;
+            const isIndex = v._uiIsIndex || v.relativeIndex || v.isIndex;
 
-            const effFlow = (typeof getValveFlowEffective === 'function')
+            const eff = (typeof getValveFlowEffective === 'function')
                 ? getValveFlowEffective(v)
-                : (Number.isFinite(Number(v.flow)) ? Number(v.flow) : null);
+                : Number(v.flow);
 
-            const percent = (!isDraft && typeof calcPercent === 'function')
-                ? calcPercent(effFlow, v.target)
+            const kpl = getKpl(v);
+            const effTotal = Number.isFinite(eff) ? eff * kpl : null;
+
+            const pct = (!isDraft && Number.isFinite(effTotal) && Number(v.target))
+                ? Math.round((effTotal / v.target) * 100)
                 : null;
 
-            const isIndex =
-                v._uiIsIndex === true ||
-                v.relativeIndex === true ||
-                v.isIndex === true;
-
-            const pctClass =
-                !Number.isFinite(percent) ? '' :
-                percent < 80 ? 'low' :
-                percent < 95 ? 'mid' :
-                percent <= 105 ? 'ok' :
-                'high';
-
             html += `
-                <tr data-id="${v.id}" class="${isDraft ? 'draft-row' : ''}">
-                    <td class="room-cell">
-                        ${(!isDraft && isIndex) ? '<span class="index-star">⭐</span>' : ''}
-                        <input data-f="room" value="${v.room ?? ''}">
-                    </td>
-
-                    <td>
-                        <input data-f="type"
-                               value="${typeof formatValveDisplay === 'function'
-                                    ? (formatValveDisplay(v.type) || (v.type ?? ''))
-                                    : (v.type ?? '')}"
-                               data-raw="${v.type ?? ''}">
-                    </td>
-
-                    <td>
-                        <input data-f="measuredP" type="number"
-                               value="${Number.isFinite(Number(v.measuredP)) ? v.measuredP : ''}">
-                    </td>
-
-                    <td> <input data-f="pos" type="text" inputmode="numeric"
-       value="${Number.isFinite(Number(v.pos)) ? v.pos : ''}">
-
-
-                    </td>
-
-                    <td>
-                        <input data-f="kWorking" type="number" step="0.01"
-                               value="${Number.isFinite(Number(v.kWorking)) ? v.kWorking : ''}">
-                    </td>
-
-                    <td>
-                        <input data-f="flow" type="number" step="0.1"
-                               value="${(typeof effFlow === 'number' && isFinite(effFlow)) ? effFlow.toFixed(1) : ''}">
-                    </td>
-
-                    <td>
-                        <input data-f="target" type="number" step="0.1"
-                               value="${Number.isFinite(Number(v.target)) ? v.target : ''}">
-                    </td>
-
-                    <td class="relative ${pctClass}">
-                        ${(!isDraft && Number.isFinite(percent)) ? Math.round(percent) + ' %' : '-'}
-                    </td>
-
-                    <td class="row-actions">
-                        ${isDraft ? '' : `
-                            <button data-act="up" type="button">↑</button>
-                            <button data-act="down" type="button">↓</button>
-                            <button data-act="delete" type="button">🗑</button>
-                        `}
-                    </td>
-                </tr>
-            `;
+<tr data-id="${v.id}" class="${isDraft ? 'draft-row' : ''} ${isIndex ? 'is-index-row' : ''}">
+  <td>${isIndex ? '⭐ ' : ''}<input data-f="room" value="${v.room ?? ''}"></td>
+  <td><input data-f="type" value="${v.type ?? ''}"></td>
+  <td><input data-f="kpl" type="number" min="1" value="${getKpl(v)}"></td>
+  <td><input data-f="measuredP" type="number" value="${v.measuredP ?? ''}"></td>
+  <td><input data-f="pos" value="${v.pos ?? ''}"></td>
+  <td><input data-f="kWorking" value="${v.kWorking ?? ''}"></td>
+  <td><input data-f="flow" value="${effTotal ? effTotal.toFixed(1) : ''}"></td>
+  <td><input data-f="target" value="${v.target ?? ''}"></td>
+  <td>${pct !== null ? pct + ' %' : '-'}</td>
+  <td class="row-actions">
+    ${isDraft ? '' : `
+      <button data-act="up">↑</button>
+      <button data-act="down">↓</button>
+      <button data-act="delete">🗑</button>
+    `}
+  </td>
+</tr>
+`;
         });
     });
 
     html += `
-            </tbody>
-        </table>
-    `;
+</tbody>
+</table>
+`;
 
     listEl.innerHTML = html;
 }
@@ -11892,7 +11672,7 @@ if (container.dataset.v3Bound === '1') return;
 container.dataset.v3Bound = '1';
 
 
-    const numFields = new Set(['measuredP', 'pos', 'kWorking', 'flow', 'target']);
+const numFields = new Set(['measuredP', 'pos', 'kWorking', 'flow', 'target', 'kpl']);
 
     const parseNum = (v) => {
         const n = parseFloat(String(v).replace(',', '.'));
@@ -11946,10 +11726,11 @@ container.dataset.v3Bound = '1';
     });
 };
 
-
 const rerenderMeasurementList = () => {
+    if (window.measurementListEditLock) return;
     renderDetailsList?.();
 };
+
 
     // ✅ Päätelaite-ehdotukset: valveGroups (ei p.kLibrary)
     const buildKLibraryTypeList = () => {
@@ -12114,9 +11895,10 @@ window.updateRowComputedUI = (tr, v) => {
 
 
 
-    // ennen eventtejä
-ensureSingleDraftPerDuct();
-// ✅ autocomplete type + avaus (pos)
+
+/* =========================================================
+   ✅ AUTOCOMPLETE: TYPE + AVAUS (POS)
+   ========================================================= */
 container.addEventListener('focusin', (e) => {
     const inp = e.target;
     if (!(inp instanceof HTMLInputElement)) return;
@@ -12127,9 +11909,8 @@ container.addEventListener('focusin', (e) => {
     const tr = inp.closest('tr');
     if (!tr) return;
 
-    // 🔑 HAE VENTTIILI TÄSSÄ – EI KOSKAAN MYÖHEMMIN
-    const found = findValveForRow(tr);
-    const v = found?.v;
+    // 🔑 hae venttiili heti
+    const { v } = findValveForRow(tr);
     if (!v) return;
 
     /* ================================
@@ -12156,13 +11937,11 @@ container.addEventListener('focusin', (e) => {
 
     /* ================================
        2) AVAUS (pos)
-       🔑 EI FOKUSHAKUA
     ================================= */
     if (field === 'pos') {
         attachPosAutocompleteIfNeeded(inp, v, (picked) => {
             if (!picked || !Number.isFinite(picked.pos)) return;
 
-            // 🔑 aseta arvot SUORAAN
             v.pos = Number(picked.pos);
             inp.value = String(v.pos);
 
@@ -12178,7 +11957,7 @@ container.addEventListener('focusin', (e) => {
             saveData?.();
         });
 
-        // 🔑 pakota lista auki heti
+        // pakota autocomplete auki heti
         requestAnimationFrame(() => {
             inp.dispatchEvent(new Event('input', { bubbles: true }));
         });
@@ -12188,143 +11967,234 @@ container.addEventListener('focusin', (e) => {
 });
 
 
-    // ✅ input: päivitä data
-   container.addEventListener('input', (e) => {
+/* =========================================================
+   ✅ INPUT: DATA-PÄIVITYS (EI kpl TÄSSÄ)
+   ========================================================= */
+container.addEventListener('input', (e) => {
     const inp = e.target;
     if (!(inp instanceof HTMLInputElement)) return;
 
-    // 🔑 TALLENNA KURSORIN SIJAINTI
-    const caretPos = inp.selectionStart;
+    const tr = inp.closest('tr');
+    if (!tr) return;
 
+    const field = inp.dataset.f;
+    if (!field) return;
 
-        const tr = inp.closest('tr');
-        if (!tr) return;
+    const { v } = findValveForRow(tr);
+    if (!v) return;
 
-        const field = inp.dataset.f;
-        if (!field) return;
+    // 🔒 lukitse vain validille riville
+    window.measurementListEditLock = true;
 
-        let { duct, v } = findValveForRow(tr);
+    try {
+        if (numFields.has(field)) {
+            const n = parseNum(inp.value);
+            v[field] = n;
 
-        // jos draft-rivi, mutta ei löydy datasta → varmista draft
-        if (!v && tr.classList.contains('draft-row')) {
-ensureSingleDraftPerDuct();
-    rerenderMeasurementList();
-    return;
-}
+            // 🔒 manuaalilukot
+            if (field === 'flow') {
+                v.__manualFlow = (inp.value !== '');
+            }
 
-        if (!v) return;
+            if (field === 'kWorking') {
+                v.__manualK = (n !== '' && n != null);
+            }
 
-       // 🔑 Draft-promootio myös MANUAALISESTA syötöstä
-if (v.__isDraft) {
-    v.__isDraft = false;
-        v.__wasDraftPromoted = true; // 🔑 MERKKI
-    tr.classList.remove('draft-row');
+            // 🔑 avaus → hae K automaattisesti
+            if (field === 'pos' && Number.isFinite(n) && v.type && !v.__manualK) {
+                const lib = window.userKLibraryV2;
+                const entries = Array.isArray(lib?.entries) ? lib.entries : [];
 
-ensureSingleDraftPerDuct();
-}
+                const match = entries.find(e =>
+                    String(e.model) === String(v.type) &&
+                    Number(e.pos) === n &&
+                    Number.isFinite(Number(e.k))
+                );
 
+                if (match) {
+                    v.kWorking = Number(match.k);
+                    const kInp = tr.querySelector('input[data-f="kWorking"]');
+                    if (kInp) kInp.value = String(v.kWorking);
+                }
+            }
 
-
-      if (numFields.has(field)) {
-    const n = parseNum(inp.value);
-    v[field] = n;
-
-    // 🔒 Manuaalilukot
-   if (field === 'flow') {
-    // manuaalinen vain jos käyttäjä oikeasti kirjoitti jotain
-    v.__manualFlow = (inp.value !== '');
-}
-
-    if (field === 'kWorking') {
-        v.__manualK = (n !== '' && n != null);
-    }
-
-    // 🔑 MANUAALINEN AVAUS → hae K automaattisesti jos löytyy
-    if (field === 'pos' && Number.isFinite(n) && v.type && !v.__manualK) {
-        const lib = window.userKLibraryV2;
-        const entries = Array.isArray(lib?.entries) ? lib.entries : [];
-
-        const match = entries.find(e =>
-            String(e.model) === String(v.type) &&
-            Number(e.pos) === n &&
-            Number.isFinite(Number(e.k))
-        );
-
-        if (match) {
-            v.kWorking = Number(match.k);
-
-            const kInp = tr.querySelector('input[data-f="kWorking"]');
-            if (kInp) kInp.value = v.kWorking;
+        } else {
+            // teksti-kentät
+            if (field === 'type') {
+                v.type = inp.dataset.raw || inp.value;
+            } else {
+                v[field] = inp.value;
+            }
         }
-    }
 
-} else {
-    if (field === 'type') {
-        v.type = inp.dataset.raw || inp.value;
-    } else {
-        v[field] = inp.value;
-    }
-}
-
-updateRowComputedUI(tr, v);
-// 🔁 Viivästetty render, jotta kirjoitus ei katkea
-
-if (v.__wasDraftPromoted) {
-    const keepId = v.id;
-    const keepField = field;
-
-    requestAnimationFrame(() => {
-        rerenderMeasurementList();
-
-        requestAnimationFrame(() => {
-            const row = container.querySelector(
-                `tr[data-id="${CSS.escape(String(keepId))}"]`
-            );
-            const input = row?.querySelector(
-    `input[data-f="${CSS.escape(String(keepField))}"]`
-);
-
-if (input) {
-    input.focus();
-
-    // 🔑 PALAUTA CARET OIKEAAN KOHTAAN
-    const pos = Math.min(caretPos + 1, input.value.length);
-    input.setSelectionRange(pos, pos);
-}
-
-        });
-    });
-
-    delete v.__wasDraftPromoted;
-}
-
+        updateRowComputedUI(tr, v);
         saveData?.();
-    });
 
-    // ✅ napit: nuoli ylös/alas + delete (poistaa kaikkialta deleteValveById:llä)
-    container.addEventListener('click', (e) => {
-        const btn = e.target.closest('button[data-act]');
-        if (!btn) return;
+    } finally {
+        window.measurementListEditLock = false;
+    }
+});
 
-        const tr = btn.closest('tr[data-id]');
-        if (!tr) return;
 
-        const act = btn.dataset.act;
-        const valveId = tr.dataset.id;
+/* =========================================================
+   ✅ FOCUSOUT: KPL + DRAFT-PROMOOTIO
+   ========================================================= */
+container.addEventListener('focusout', (e) => {
+    const el = e.target;
+    if (!(el instanceof HTMLInputElement)) return;
+    if (!el.dataset.f) return;
 
-        if (act === 'up' && typeof window.moveValveUp === 'function') {
-            window.moveValveUp(valveId);
+    const field = el.dataset.f;
+    window.measurementListEditLock = false;
+
+    const tr = el.closest('tr');
+    if (!tr) return;
+
+    const { v } = findValveForRow(tr);
+    if (!v) return;
+
+    console.log('🚪 focusout', 'field=', field, 'isDraft=', v.__isDraft);
+
+    // ✅ KPL – AINOA KÄSITTELYPAIKKA
+    if (field === 'kpl') {
+        const k = parseInt(String(el.value || '1'), 10);
+        v.kpl = Number.isFinite(k) && k > 0 ? k : 1;
+        el.value = v.kpl;
+        rerenderMeasurementList();
+        return;
+    }
+
+    // ✅ draft → oikeaksi riviksi
+    if (v.__isDraft) {
+        v.__isDraft = false;
+        tr.classList.remove('draft-row');
+        ensureSingleDraftPerDuct();
+        rerenderMeasurementList();
+    }
+});
+
+// ✅ napit: nuoli ylös/alas + delete
+container.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-act]');
+    if (!btn) return;
+
+    const tr = btn.closest('tr[data-id]');
+    if (!tr) return;
+
+    const act = btn.dataset.act;
+    const valveId = tr.dataset.id;
+
+    if (act === 'up' && typeof window.moveValveUp === 'function') {
+        window.moveValveUp(valveId);
+    }
+    if (act === 'down' && typeof window.moveValveDown === 'function') {
+        window.moveValveDown(valveId);
+    }
+    if (act === 'delete' && typeof window.deleteValveById === 'function') {
+        window.deleteValveById(valveId);
+    }
+});
+
+
+// 🔓 vapauta lukko + promotoi draft kun poistutaan kentästä
+container.addEventListener('focusout', (e) => {
+    const el = e.target;
+    if (!(el instanceof HTMLInputElement)) return;
+    if (!el.dataset.f) return;
+
+    const field = el.dataset.f;   // ✅ TÄMÄ PUUTTUI
+    window.measurementListEditLock = false;
+
+    const tr = el.closest('tr');
+    if (!tr) return;
+
+    const found = findValveForRow(tr);
+    const v = found?.v;
+
+    console.log('🚪 focusout', 'field=', field, 'isDraft=', v?.__isDraft);
+
+    // ✅ KPL: päivitä data + renderöi lista uudelleen
+    if (field === 'kpl' && v) {
+        v.kpl = Math.max(1, Number(el.value || 1));
+        rerenderMeasurementList();   // 🔑 käytä olemassa olevaa reittiä
+        return;
+    }
+
+    // ✅ Draftin promootio
+    if (v && v.__isDraft) {
+        v.__isDraft = false;
+        tr.classList.remove('draft-row');
+
+        ensureSingleDraftPerDuct();
+        rerenderMeasurementList();
+    }
+});
+
+// ⌨️ ENTER / TAB / SHIFT+ENTER / CTRL+ENTER -navigointi
+container.addEventListener('keydown', (e) => {
+    const inp = e.target;
+    if (!(inp instanceof HTMLInputElement)) return;
+    if (!inp.dataset.f) return;
+
+    // anna autocomplete-boxin hoitaa Enter itse
+    const autoBox = inp.parentElement?.querySelector('.autocomplete-box');
+    if (autoBox && autoBox.style.display === 'block') return;
+
+    const isEnter = e.key === 'Enter';
+    const isTab = e.key === 'Tab';
+    if (!isEnter && !isTab) return;
+
+    e.preventDefault();
+
+    const isShift = e.shiftKey;
+    const isCtrl = e.ctrlKey || e.metaKey;
+
+    const tr = inp.closest('tr');
+    if (!tr) return;
+
+    const rowInputs = Array.from(
+        tr.querySelectorAll('input[data-f]')
+    ).filter(i => !i.disabled && i.offsetParent !== null);
+
+    const idx = rowInputs.indexOf(inp);
+
+    // 🔼 CTRL+ENTER → edellisen rivin HUONE
+    if (isCtrl && isEnter) {
+        const prevRow = tr.previousElementSibling;
+        const target = prevRow?.querySelector('input[data-f="room"]');
+        if (target) target.focus();
+        return;
+    }
+
+    // 🔽 SHIFT+ENTER → taaksepäin
+    if (isShift && isEnter) {
+        if (idx > 0) {
+            rowInputs[idx - 1].focus();
+        } else {
+            const prevRow = tr.previousElementSibling;
+            const inputs = prevRow
+                ? Array.from(prevRow.querySelectorAll('input[data-f]')).filter(i => i.offsetParent !== null)
+                : [];
+            if (inputs.length) inputs[inputs.length - 1].focus();
         }
-        if (act === 'down' && typeof window.moveValveDown === 'function') {
-            window.moveValveDown(valveId);
-        }
-        if (act === 'delete' && typeof window.deleteValveById === 'function') {
-            window.deleteValveById(valveId);
-        }
-    });
+        return;
+    }
+
+    // ▶ ENTER / TAB → eteenpäin
+    if (idx < rowInputs.length - 1) {
+        rowInputs[idx + 1].focus();
+        return;
+    }
+
+    // viimeinen kenttä → seuraavan rivin HUONE
+    const nextRow = tr.nextElementSibling;
+    const target = nextRow?.querySelector('input[data-f="room"]');
+    if (target) target.focus();
+});
+
+
+
 }
-
-
 
 
 function getElementsForDuct(duct, modeData) {
@@ -12704,23 +12574,26 @@ function zoomToValve(ductId, valveId) {
     window.mapViewState.activeValveId = valveId;
     window.mapViewState.activeDuctId = ductId;
 
-    // 🔍 Zoomaa venttiilitasolle
-    const targetScale = Math.max(
-        window.mapWorldState.scale,
-        ZOOM_TO_VALVES + 0.05
-    );
+    // 🔍 Zoomaa VAIN tason SISÄLLÄ (EI vaihda tasoa)
+    if (window.mapWorldState) {
+       if (window.mapWorldState) {
+    const minScale = ZOOM_TO_VALVES + 0.05;
 
-    window.mapWorldState.scale = targetScale;
-    window.mapLevel = 'valves';
+    // 🔍 Varmista että ollaan tarpeeksi lähellä,
+    // mutta ÄLÄ lukitse käyttäjän zoomia
+    if ((window.mapWorldState.scale || 1) < minScale) {
+        window.mapWorldState.scale = minScale;
+        applyMapTransform();
+    }
+}
 
-    applyMapTransform();
-
-    // 🔄 Renderöi kartta uudelleen
-    if (typeof renderVisualContent === 'function') {
-        renderVisualContent();
+        applyMapTransform();
     }
 
-    // ✅ ODOTA DOMIN VALMISTUMISTA (2 frameä varmuuden vuoksi)
+    // ❌ EI mapLevel-vaihtoa täällä
+    // ❌ EI renderVisualContent()-kutsua täällä
+
+    // ✅ Avaa venttiilikortti kun DOM on valmis
     requestAnimationFrame(() => {
         requestAnimationFrame(() => {
             if (typeof openValveById === 'function') {
@@ -13827,5 +13700,4 @@ window.saveCurrentKToLibrary = saveCurrentKToLibrary;
 
 window.openKLibraryPicker = openKLibraryPicker;
 window.saveCurrentKToLibrary = saveCurrentKToLibrary;
-
 
