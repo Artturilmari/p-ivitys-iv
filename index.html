@@ -244,17 +244,26 @@
     </div>
 
     <!-- TASONVAIHTO + ZOOM -->
-    <div style="display:flex; gap:5px;">
-      <button onclick="goNextMapLevel()">+</button>
-      <button onclick="goPrevMapLevel()">−</button>
+<div style="display:flex; gap:5px;">
 
-      <button class="btn btn-secondary"
-              style="padding:5px 10px;"
-              onclick="fitMapToScreen()"
-              title="Sovita kartta näkymään">
-        ⛶
-      </button>
-    </div>
+  <!-- Tasovaihto (PIDÄ ENNALLAAN) -->
+  <button onclick="goPrevMapLevel()" title="Edellinen taso">◀</button>
+  <button onclick="goNextMapLevel()" title="Seuraava taso">▶</button>
+
+  <!-- Zoom -->
+  <button onclick="zoomIn()" title="Zoomaa sisään">＋</button>
+  <button onclick="zoomOut()" title="Zoomaa ulos">－</button>
+
+  <!-- Sovita näkymään -->
+  <button class="btn btn-secondary"
+          style="padding:5px 10px;"
+          onclick="fitMapToScreen()"
+          title="Sovita kartta näkymään">
+    ⛶
+  </button>
+
+</div>
+
   </div>
 
   <!-- YLÄRIVI (Takaisin / kone) -->
@@ -273,18 +282,28 @@
   </div>
 
   <!-- KARTTA / SISÄLTÖ -->
-  <div id="visScrollArea"
-       style="overflow:auto; height:80vh; background:#eef; position:relative;">
+ <div id="visScrollArea"
+     style="
+       overflow:hidden;
+       height:80vh;
+       background:#eef;
+       position:relative;
+       cursor:grab;
+     ">
+
+
 
     <div id="visContent"
-         style="
-           transform-origin: 0 0;
-           transition: transform 0.1s ease;
-           padding:50px;
-           min-height:1000px;
-           min-width:1000px;
-         ">
-    </div>
+     style="
+       position:relative;
+       transform-origin: 0 0;
+       transition: transform 0.1s ease;
+       padding:600px 600px;   /* 🔑 iso turva-alue joka suuntaan */
+       min-height:4000px;     /* 🔑 maailma ei lopu kesken */
+       min-width:6000px;      /* 🔑 sivusuunta vapaaksi */
+     ">
+</div>
+
 
   </div>
 </div>

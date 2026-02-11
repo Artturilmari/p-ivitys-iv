@@ -3241,15 +3241,24 @@ body.modal-open .view {
 
 /* Autocomplete (V3-yhteensopiva, erottuva) */
 .autocomplete-box {
-    position: absolute;
-    left: 0;
-    top: 100%;
-    z-index: 99999;
-    min-width: 100%;
-    max-height: 220px;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    max-height: 240px;
     overflow-y: auto;
-    box-shadow: 0 8px 18px rgba(0,0,0,0.25);
+    box-shadow: 0 6px 18px rgba(0,0,0,0.25);
+    z-index: 100000; /* varmistus */
 }
+
+.ac-item {
+    padding: 8px 10px;
+    cursor: pointer;
+}
+
+.ac-item:hover {
+    background: #e3f2fd;
+}
+
 
 
 .autocomplete-item {
@@ -3346,11 +3355,12 @@ body {
 }
 
 .measurement-body {
-  overflow-x: auto;
+  overflow-x: hidden;   /* ⬅ poistetaan sivuttaisscroll */
   overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
-  background: #fff;
+  max-height: none;     /* ⬅ anna jatkua vapaasti */
 }
+
+
 
 /* ─────────────────────────────
    TAULUKKO – DESKTOP
@@ -3358,27 +3368,29 @@ body {
 .measurement-table {
   border-collapse: collapse;
   table-layout: fixed;
-  width: max-content;
-  min-width: 1100px;
+
+  width: 100%;        /* 🔑 mahtuu näkymään */
+  min-width: 0;       /* 🔑 POISTA pakotus */
+
   font-size: 13px;
 }
 
+
 .measurement-table thead th {
-  height: 34px;
-  padding: 4px 6px;
-  font-weight: 600;
-  background: #f3f5f7;
-  border-bottom: 1px solid #d0d6dc;
-  white-space: nowrap;
+  height: 28px;          /* ⬅ pienempi */
+  padding: 2px 4px;     /* ⬅ tiiviimpi */
 }
 
+
 .measurement-table td {
-  height: 34px;
-  padding: 4px 6px;
+  height: 28px;
+  padding: 2px 4px;
   border-bottom: 1px solid #eef0f2;
   white-space: nowrap;
-  overflow: hidden;
+
+  overflow: visible;          /* 🔑 MUUTOS */
   text-overflow: ellipsis;
+  position: relative;         /* 🔑 LISÄYS */
 }
 
 .measurement-table input {
@@ -3447,14 +3459,19 @@ body {
     margin: 0;
     padding: 0;
   }
+  /* 📱 MOBIILISSA: sallitaan pystyscroll */
+.measurement-body {
+  overflow-x: auto;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 
   /* 🔑 TÄRKEIN KORJAUS */
   .measurement-table {
-    width: 100%;              /* EI max-content */
-    min-width: 0;
-    table-layout: fixed;      /* pakota mahtumaan */
-    font-size: 11px;
-  }
+  table-layout: fixed;
+}
+
 
   .measurement-table th,
   .measurement-table td {
@@ -3465,28 +3482,28 @@ body {
 
   /* Sarakkeet (samat kuin aiemmin) */
   .measurement-table th:nth-child(1),
-  .measurement-table td:nth-child(1) { width: 11ch; }
+  .measurement-table td:nth-child(1) { width: 10ch; }
 
   .measurement-table th:nth-child(2),
   .measurement-table td:nth-child(2) { width: 11ch; }
 
   .measurement-table th:nth-child(3),
-  .measurement-table td:nth-child(3) { width: 6ch; }
+  .measurement-table td:nth-child(3) { width: 4ch; }
 
   .measurement-table th:nth-child(4),
-  .measurement-table td:nth-child(4) { width: 8ch; }
+  .measurement-table td:nth-child(4) { width: 5.5ch; }
 
   .measurement-table th:nth-child(5),
-  .measurement-table td:nth-child(5) { width: 6.6ch; }
+  .measurement-table td:nth-child(5) { width: 6ch; }
 
   .measurement-table th:nth-child(6),
-  .measurement-table td:nth-child(6) { width: 8.2ch; }
+  .measurement-table td:nth-child(6) { width: 6ch; }
 
   .measurement-table th:nth-child(7),
-  .measurement-table td:nth-child(7) { width: 9ch; }
+  .measurement-table td:nth-child(7) { width: 7ch; }
 
   .measurement-table th:nth-child(8),
-  .measurement-table td:nth-child(8) { width: 9ch; }
+  .measurement-table td:nth-child(8) { width: 7ch; }
 
   .measurement-table th:nth-child(9),
   .measurement-table td:nth-child(9) { width: 11ch; }
@@ -3549,4 +3566,428 @@ body {
   left: 0;
   top: 0;
   transform-origin: 0 0;
+}
+
+/* ================================
+   MITTALISTA – DESKTOP KAVENNUS
+================================ */
+#view-details table {
+    max-width: 1500px;
+    margin-right: auto;
+}
+/* ================================
+   KONEEN KOKONAISLITRAT – EI STICKY
+================================ */
+#view-details > div {
+    position: static;
+}
+/* ================================
+   MITTALISTAN OTSIKOT – STICKY
+================================ */
+#view-details table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+
+    background: #ffffff;
+    border-bottom: 2px solid #ccc;
+}
+/* ================================
+   MITTALISTA – VISUAALINEN EROTTELU
+================================ */
+#view-details table {
+    background: #ffffff;
+    border: 1px solid #ddd;
+    border-collapse: collapse;
+}
+
+/* OLETUSTAUSTA – EI RUNKO- EIKÄ DUCT-RIVEILLE */
+#view-details table tbody tr:not(.duct-header):not(.duct-row) td {
+    background: #ffffff;
+}
+/* 🔒 VARMISTUS: duct-värit voittavat */
+#view-details table tr.duct-header td {
+    background: inherit;
+}
+
+
+
+/* ================================
+   MITTALISTAN RIVIT
+================================ */
+/* Hover vain varsinaisille venttiiliriveille */
+#view-details table tbody tr:hover:not(.duct-header) {
+    background: #f2f7ff;
+}
+
+#view-details table tbody tr:focus-within {
+    background: #eaf2ff;
+}
+/* ================================
+   TOIMINTASARAKKEET (↑ ↓ 🗑️)
+================================ */
+#view-details table td:last-child {
+    width: 44px;
+    text-align: center;
+}
+
+#view-details table td:last-child button {
+    opacity: 0.4;
+}
+
+#view-details table tr:hover td:last-child button {
+    opacity: 1;
+}
+@media (max-width: 900px) {
+    #view-details table {
+        max-width: 100%;
+    }
+}
+/* ================================
+   RUNKOPALKIT – TULO / POISTO
+================================ */
+/* ================================
+   RUNGON LASKENNAT OTSIKOSSA
+================================ */
+.duct-header .duct-title {
+  font-weight: 700;
+}
+
+.duct-header .duct-totals {
+  margin-left: 12px;
+  font-weight: 600;
+  opacity: 0.95;
+  white-space: nowrap;
+}
+
+/* Värit rungon mukaan */
+.measurement-table tr.duct-header.supply .duct-totals {
+  color: #e3f2fd; /* vaalea sininen */
+}
+
+.measurement-table tr.duct-header.extract .duct-totals {
+  color: #ffebee; /* vaalea punainen */
+}
+
+/* TULO-runko */
+.measurement-table tr.duct-header.supply {
+  background: #1e88e5;
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.measurement-table tr.duct-header.supply td {
+  background: #1e88e5;
+  border-bottom: 2px solid #1565c0;
+}
+
+/* POISTO-runko */
+.measurement-table tr.duct-header.extract {
+  background: #d32f2f;
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.measurement-table tr.duct-header.extract td {
+  background: #d32f2f;
+  border-bottom: 2px solid #b71c1c;
+}
+/* ================================
+   RUNGON ALLA OLEVAT RIVIT – PARANNETTU KONTRASTI
+================================ */
+
+/* TULO-rivit */
+.measurement-table tr.duct-row.supply {
+  background: #d6ecfa;
+}
+
+.measurement-table tr.duct-row.supply td:first-child {
+  box-shadow: inset 4px 0 0 #1e88e5; /* sidonta runkoon */
+}
+
+/* POISTO-rivit */
+.measurement-table tr.duct-row.extract {
+  background: #f9dada;
+}
+
+.measurement-table tr.duct-row.extract td:first-child {
+  box-shadow: inset 4px 0 0 #d32f2f; /* sidonta runkoon */
+}
+.measurement-table tr.duct-row td {
+  border-bottom: 1px solid rgba(0,0,0,0.04);
+}
+/* 🔑 RIVIN TAUSTA LEVIÄÄ KAIKKIIN SOLUIHIN */
+.measurement-table tr td {
+  background: inherit;
+}
+/* ================================
+   INPUTIT – PERUSREUNUS AINA
+================================ */
+.measurement-table input {
+  box-sizing: border-box;
+  padding: 1px 3px;     /* ⬅ selvästi tiiviimpi */
+  height: 22px;         /* ⬅ pakotettu korkeus */
+  border: 1px solid rgba(0, 0, 0, 0.18);
+}
+
+/* ================================
+   INPUT – FOKUS
+================================ */
+.measurement-table input:focus {
+  outline: none;
+
+  border-color: #1565c0;
+  box-shadow: 0 0 0 1px rgba(21, 101, 192, 0.35);
+  background: rgba(255, 255, 255, 0.4);
+}
+/* ================================
+   DRAFT-RIVIN KENTÄT
+================================ */
+.measurement-table tr.draft-row input {
+  border-style: dashed;
+  opacity: 0.85;
+}
+/* ================================
+   AUTOCOMPLETE – NÄKYVYYS VARMISTUS
+================================ */
+.measurement-table td {
+  overflow: visible;
+}
+
+.autocomplete-dropdown {
+  position: absolute;
+  z-index: 9999;
+  background: #ffffff;
+  border: 1px solid #ccc;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+/* ================================
+   🖥️ DESKTOP – EI SIVUTTAISSCROLLIA
+================================ */
+@media (min-width: 900px) {
+  .measurement-shell,
+  .measurement-body {
+    overflow-x: hidden;
+  }
+
+  #view-details {
+    overflow-x: hidden;
+  }
+}
+/* ===============================
+   🔒 PHASE C – RUNKONÄKYMÄ LUKKO
+   =============================== */
+
+.map-wow {
+  position: relative;
+  display: block !important;   /* EI grid, EI flex */
+}
+
+.map-area {
+  position: relative;
+  display: block !important;
+}
+
+.map-lane {
+  position: absolute;          /* JS ohjaa y-koordinaatin */
+  left: 200px;                 /* rungot alkavat koneen oikealta */
+}
+.map-valve-dot {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    cursor: pointer;
+    border: 2px solid #fff;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+}
+
+/* värit = sama logiikka kuin mittalistassa */
+.valve-green { background: #4caf50; }
+.valve-yellow { background: #ffb300; }
+.valve-red { background: #e53935; }
+.valve-gray { background: #9e9e9e; }
+.map-valve-card .valve-card {
+    min-width: 220px;
+    background: #fff;
+    border-radius: 10px;
+    padding: 10px 12px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+    font-size: 13px;
+}
+
+.valve-card .vc-head {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 6px;
+}
+
+.valve-card .badge {
+    background: #673ab7;
+    color: #fff;
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 6px;
+}
+
+.valve-card .vc-row {
+    display: flex;
+    justify-content: space-between;
+    margin: 2px 0;
+}
+
+.valve-card.green { border-left: 4px solid #4caf50; }
+.valve-card.yellow { border-left: 4px solid #ffb300; }
+.valve-card.red { border-left: 4px solid #e53935; }
+.valve-card.gray { border-left: 4px solid #9e9e9e; }
+
+.valve-card .vc-hint.open { color: #1976d2; }
+.valve-card .vc-hint.close { color: #d32f2f; }
+.map-insert-point {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #ffffff;
+    border: 2px dashed #666;
+    color: #333;
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 14px;
+    text-align: center;
+    cursor: pointer;
+    user-select: none;
+    opacity: 0.85;
+}
+
+.map-insert-point:hover {
+    background: #4caf50;
+    border-color: #4caf50;
+    color: #fff;
+    opacity: 1;
+}
+.map-insert-point{
+  background:#fff;
+  border:2px dashed #666;
+  box-shadow:0 2px 8px rgba(0,0,0,.12);
+}
+#map-viewport,
+.map-viewport,
+.view-map {
+    overflow: auto;
+}
+.map-valve-dot.valve-draft {
+    background: #ccc !important;
+    border-style: dashed;
+    opacity: 0.7;
+}
+
+
+.ac-group {
+    font-weight: bold;
+    padding: 6px 8px;
+    background: #f2f2f2;
+    font-size: 12px;
+    color: #444;
+}
+
+.ac-item {
+    padding: 6px 8px;
+    cursor: pointer;
+}
+
+.ac-item:hover {
+    background: #e3f2fd;
+}
+/* ================================
+   Venttiilinäkymä – rungot
+================================ */
+
+.duct-card-header {
+    margin-top: 24px;
+    margin-bottom: 6px;
+}
+
+.duct-trunk-line {
+    height: 4px;
+    width: 100%;
+    max-width: 520px;
+    margin: 0 0 14px 6px;
+    border-radius: 3px;
+    background: linear-gradient(
+        to right,
+        #1e88e5 0%,
+        #1e88e5 70%,
+        transparent 100%
+    );
+}
+
+/* POISTO rungot punaisina */
+.duct-badge.extract + .duct-trunk-line,
+.extract + .duct-trunk-line {
+    background: linear-gradient(
+        to right,
+        #e53935 0%,
+        #e53935 70%,
+        transparent 100%
+    );
+}
+.duct-card-list {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    margin-left: 24px; /* roikkuu rungosta */
+}
+/* ================================
+   Venttiilinäkymä – rungot
+================================ */
+
+.duct-trunk-line {
+  height: 4px;
+  width: 100%;
+  max-width: 520px;
+  margin: 2px 0 12px 6px;
+  border-radius: 4px;
+  opacity: 0.9;
+}
+.map-valve-card {
+  width: 160px;
+  min-height: 90px;          /* 🔑 kaikille sama korkeus */
+  padding: 8px 10px;
+  background: #ffffff;
+  border-radius: 10px;
+  border: 1px solid #ddd;
+  box-shadow: 0 6px 16px rgba(0,0,0,.15);
+
+  display: flex;              /* 🔑 */
+  flex-direction: column;     /* 🔑 */
+  justify-content: space-between; /* 🔑 */
+
+  font-size: 12px;
+}
+
+
+.map-valve-card h3 {
+    margin: 0 0 6px 0;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.map-valve-card .row {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 2px;
+}
+
+
+.map-valve-card.valve-ok { border-left:4px solid #43a047; }
+.map-valve-card.valve-low { border-left:4px solid #fb8c00; }
+.map-valve-card.valve-high { border-left:4px solid #e53935; }
+.map-valve-card.valve-index { border-left:4px solid #8e24aa; }
+
+.valve-card-title {
+  font-weight:700;
+  margin-bottom:4px;
+}
+
+.valve-card-flow {
+  font-size:12px;
 }
